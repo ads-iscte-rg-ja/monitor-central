@@ -1,0 +1,12 @@
+{{define "navigation"}}
+<aside id="navigation" class="hidden md:flex fixed top-0 left-0 bottom-0 w-60 bg-[#141414] border-r border-[#2a2a2a] flex-col z-20 p-5">
+  <a href="/dashboard" class="text-xl font-bold mb-8">Monitor</a>
+  <nav class="flex-1 space-y-2" aria-label="Main navigation">
+    <a href="/dashboard" class="nav-link {{if eq .CurrentPath "/dashboard"}}active{{end}}">Dashboard</a>
+    <a href="/hosts" class="nav-link {{if eq .CurrentPath "/hosts"}}active{{end}}">Hosts</a>
+    <a href="/errors" class="nav-link {{if eq .CurrentPath "/errors"}}active{{end}}">Error logs</a>
+    <a href="/alerts" class="nav-link {{if eq .CurrentPath "/alerts"}}active{{end}}">Alerts</a>
+  </nav>
+  <a href="/profile" class="nav-link {{if eq .CurrentPath "/profile"}}active{{end}}">Account</a>
+  <form method="post" action="/logout"><button class="nav-link w-full text-left" type="submit">Sign out</button></form>
+</aside>{{end}}

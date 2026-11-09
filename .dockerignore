@@ -1,0 +1,14 @@
+.env
+.env.*
+.monitor-env-*
+.git
+bin/
+tmp/
+temp/
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.test
+*.out
+main

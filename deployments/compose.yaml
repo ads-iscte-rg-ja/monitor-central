@@ -1,0 +1,70 @@
+# One build context and the same configuration for the backend and DB tools.
+# Override the host-side DB address/port for Docker's private service network.
+x-central: &central
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  env_file:
+    - ${CENTRAL_ENV_FILE:-../.env}
+  environment:
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+    PORT: "3333"
+    FRONTEND_PATH: /app/frontend
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: admin-tool-postgres
+    # Do not give the database the application's HMAC, SMTP, or admin secrets.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # Data persistence
+      - postgres_data:/var/lib/postgresql/data
+      # Initialization: Runs on first startup only
+      - ./database/init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      # The entrypoint's temporary initialization server is socket-only. Check
+      # TCP so dependencies wait until init.sql has finished and startup is done.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    <<: *central
+    command: ["/app/bin/migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    <<: *central
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${PORT:-3333}:3333"
+    restart: unless-stopped
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3333/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  postgres_data:

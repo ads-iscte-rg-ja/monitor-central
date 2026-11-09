@@ -1,0 +1,42 @@
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+
+# --- Go ---
+# Compiled binaries (project builds to repo root as `main`)
+/main
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+
+# --- IDE & editor ---
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs & temp ---
+*.log
+tmp/
+temp/
+
+# --- Personal / local notes ---
+todos.txt

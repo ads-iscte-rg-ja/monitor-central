@@ -1,0 +1,20 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitor · Operations</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.18"></script>
+  <link rel="stylesheet" href="/public/app.css">
+  <script src="/js/app.js" defer></script>
+</head>
+<body class="bg-[#0d0d0d] text-[#e8e8e8] min-h-screen font-sans">
+{{if .isAuthenticated}}
+  <header class="md:hidden flex items-center justify-between p-4 border-b border-[#2a2a2a]"><a href="/dashboard" class="font-bold">Monitor</a><button type="button" id="navigation-toggle" aria-controls="navigation" aria-expanded="false">Menu</button></header>
+  {{template "navigation" .}}
+  <main class="md:ml-60 p-4 sm:p-8 max-w-[1600px]">{{template "main" .}}</main>
+{{else}}
+  <header class="border-b border-[#2a2a2a] px-6 py-5 flex justify-between"><a href="/" class="text-xl font-bold">Monitor</a><a href="/login" class="text-indigo-300">Sign in</a></header>
+  <main class="max-w-5xl mx-auto px-4 py-12">{{template "main" .}}</main>
+  <footer class="px-6 py-8 text-sm text-[#9a9a9a] text-center">Monitor · {{.Year}} <a class="ml-4" href="/privacy-policy">Privacy</a><a class="ml-4" href="/terms">Terms</a></footer>
+{{end}}
+</body></html>{{end}}

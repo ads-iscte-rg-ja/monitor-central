@@ -1,0 +1,11 @@
+{{define "alert-fields"}}
+<label class="label">Name<input class="field" name="name" maxlength="200" value="{{.Name}}" required></label>
+<label class="label">Host<select class="field" name="host_id" required>{{range .Hosts}}<option value="{{.ID}}" {{if eq $.SelectedHost .ID}}selected{{end}}>{{.Name}} ({{.Hostname}})</option>{{end}}</select></label>
+<label class="label">Metric<select class="field" name="metric">{{range .Metrics}}<option value="{{.}}" {{if eq $.Metric .}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label class="label">Condition<select class="field" name="condition"><option value="gt" {{if eq .Condition "gt"}}selected{{end}}>Greater than</option><option value="lt" {{if eq .Condition "lt"}}selected{{end}}>Less than</option></select></label>
+<label class="label">Threshold<input class="field" type="number" name="threshold" min="0.01" step="any" value="{{.Threshold}}" required></label>
+<p class="muted text-sm">CPU/RAM/disk: percent. Error rate: errors per minute. Error level: 1 INFO, 2 WARN, 3 ERROR, 4 CRITICAL, 5 PANIC (matches at or above). Host offline: minutes.</p>
+<label class="label">Severity<select class="field" name="severity"><option value="warning" {{if eq .Severity "warning"}}selected{{end}}>Warning</option><option value="critical" {{if eq .Severity "critical"}}selected{{end}}>Critical</option></select></label>
+<label class="flex items-center gap-2"><input type="checkbox" name="channels" value="email" {{if .Email}}checked{{end}}> Email notification</label><input type="hidden" name="channels" value="dashboard">
+<label class="flex items-center gap-2"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> Enable rule</label>
+{{end}}
