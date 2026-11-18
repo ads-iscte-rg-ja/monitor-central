@@ -48,7 +48,7 @@ func TestStatisticsBatchPayloadAndReceiptsRollBackTogether(t *testing.T) {
 	db := isolatedDB(t)
 	migrate(t, db)
 	h := host(t, db, "batch-rollback")
-	if _, err := db.Exec(`ALTER TABLE machine_stats ADD CONSTRAINT injected_batch_failure CHECK (source_id<>1)`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `ALTER TABLE machine_stats ADD CONSTRAINT injected_batch_failure CHECK (source_id<>1)`); err != nil {
 		t.Fatal(err)
 	}
 	s := services.NewIngestionService(repositories.NewMonitoringRepository(db, testHasher(t)))

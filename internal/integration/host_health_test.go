@@ -32,7 +32,7 @@ func TestHealthEndpointOverridesTelemetryContact(t *testing.T) {
 	if count(t, db, "SELECT COUNT(*) FROM hosts WHERE status='offline' AND last_seen_at IS NOT NULL") != 1 {
 		t.Fatal("telemetry receipt overrode a failed health endpoint")
 	}
-	if _, err := db.Exec("UPDATE hosts SET unavailable_since=NOW()-INTERVAL '6 minutes'"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "UPDATE hosts SET unavailable_since=NOW()-INTERVAL '6 minutes'"); err != nil {
 		t.Fatal(err)
 	}
 	alerts := repositories.NewAlertsRepository(db)
@@ -46,7 +46,7 @@ func TestHealthEndpointOverridesTelemetryContact(t *testing.T) {
 	if err := hosts.RecordHealthCheck(ctx, target, time.Now(), true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("UPDATE hosts SET last_seen_at=NOW()-INTERVAL '1 day'"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "UPDATE hosts SET last_seen_at=NOW()-INTERVAL '1 day'"); err != nil {
 		t.Fatal(err)
 	}
 	if err := alerts.MarkHostsOffline(ctx); err != nil {
@@ -55,7 +55,7 @@ func TestHealthEndpointOverridesTelemetryContact(t *testing.T) {
 	if count(t, db, "SELECT COUNT(*) FROM hosts WHERE status='online' AND unavailable_since IS NULL") != 1 {
 		t.Fatal("healthy endpoint depended on measurement cadence")
 	}
-	if _, err := db.Exec("UPDATE hosts SET health_checked_at=NOW()-INTERVAL '2 minutes'"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "UPDATE hosts SET health_checked_at=NOW()-INTERVAL '2 minutes'"); err != nil {
 		t.Fatal(err)
 	}
 	if err := alerts.MarkHostsOffline(ctx); err != nil {
@@ -77,7 +77,7 @@ func TestPassiveHealthUsesPerHostTimeout(t *testing.T) {
 	if _, err := hosts.CreateHost(ctx, models.CreateHostRequest{Name: "frequent", Hostname: "frequent.local"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("UPDATE hosts SET last_seen_at=NOW()-INTERVAL '1 hour'"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "UPDATE hosts SET last_seen_at=NOW()-INTERVAL '1 hour'"); err != nil {
 		t.Fatal(err)
 	}
 	alerts := repositories.NewAlertsRepository(db)
@@ -127,7 +127,7 @@ func TestVersionTwoHealthUpgradePreservesTelemetryAndKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Recreate the version-2 shape only inside this isolated test schema.
-	if _, err := db.Exec(`ALTER TABLE hosts DROP COLUMN health_endpoint,DROP COLUMN contact_timeout_seconds,DROP COLUMN health_checked_at,DROP COLUMN health_check_ok,DROP COLUMN unavailable_since;
+	if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts DROP COLUMN health_endpoint,DROP COLUMN contact_timeout_seconds,DROP COLUMN health_checked_at,DROP COLUMN health_check_ok,DROP COLUMN unavailable_since;
  DELETE FROM schema_migrations WHERE version=3`); err != nil {
 		t.Fatal(err)
 	}
