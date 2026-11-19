@@ -20,7 +20,7 @@ type AlertsRepository interface {
 	UpdateAlert(context.Context, *models.AlertRule) error
 	ListMetricEvaluations(context.Context) ([]models.AlertMetricEvaluation, error)
 	CreateAlertEventWithNotifications(context.Context, *models.AlertEvent, []models.EmailNotification) (bool, error)
-	ResolveOpenAlertEvents(context.Context, int64, int64) error
+	ResolveOpenAlertEvents(context.Context, []models.AlertTarget) error
 	ListNotificationEmails(context.Context) ([]string, error)
 	AcknowledgeAlertEvent(context.Context, int64) error
 	EnsureOfflineAlertRules(context.Context, float64) error
@@ -169,31 +169,33 @@ func (s *AlertsService) EvaluateMetricAlerts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var recipients []string
-	loaded := false
+	// Rules no longer breached are resolved together, in one statement per
+	// cycle, instead of one UPDATE per rule (ADR-0005). They are resolved even
+	// if firing another alert failed, as they were before.
+	var cleared []models.AlertTarget
+	fireErr := s.fireBreachedAlerts(ctx, evaluations, &cleared)
+	if len(cleared) > 0 {
+		if err := s.repo.ResolveOpenAlertEvents(ctx, cleared); err != nil {
+			return errors.Join(fireErr, fmt.Errorf("resolve alert events: %w", err))
+		}
+	}
+	return fireErr
+}
+
+func (s *AlertsService) fireBreachedAlerts(ctx context.Context, evaluations []models.AlertMetricEvaluation, cleared *[]models.AlertTarget) error {
+	recipients := &lazyRecipients{repo: s.repo}
 	for _, e := range evaluations {
 		breached := alertConditionMatches(e.Condition, e.CurrentValue, e.Threshold)
 		if e.Metric == "error_level" {
 			breached = e.CurrentValue >= e.Threshold
 		}
 		if !breached {
-			if err := s.repo.ResolveOpenAlertEvents(ctx, e.AlertID, e.HostID); err != nil {
-				return err
-			}
+			*cleared = append(*cleared, models.AlertTarget{AlertID: e.AlertID, HostID: e.HostID})
 			continue
 		}
-		var notifications []models.EmailNotification
-		if hasNotificationChannel(e.ChannelsCSV, "email") {
-			if !loaded {
-				recipients, err = s.repo.ListNotificationEmails(ctx)
-				if err != nil {
-					return err
-				}
-				loaded = true
-			}
-			for _, recipient := range recipients {
-				notifications = append(notifications, metricNotification(e, recipient))
-			}
+		notifications, err := recipients.notifications(ctx, e)
+		if err != nil {
+			return err
 		}
 		event := &models.AlertEvent{AlertID: e.AlertID, HostID: e.HostID, TriggeredValue: e.CurrentValue, Status: "fired", FiredAt: time.Now().UTC()}
 		if _, err := s.repo.CreateAlertEventWithNotifications(ctx, event, notifications); err != nil {
@@ -322,4 +324,30 @@ func formatAlertThreshold(a models.AlertRuleListItem) string {
 		operator = "<"
 	}
 	return operator + " " + formatAlertValue(a.Metric, a.Threshold)
+}
+
+// lazyRecipients loads the notification emails once per evaluation cycle, and
+// only if some breached rule notifies by email.
+type lazyRecipients struct {
+	repo   AlertsRepository
+	emails []string
+	loaded bool
+}
+
+func (l *lazyRecipients) notifications(ctx context.Context, e models.AlertMetricEvaluation) ([]models.EmailNotification, error) {
+	if !hasNotificationChannel(e.ChannelsCSV, "email") {
+		return nil, nil
+	}
+	if !l.loaded {
+		emails, err := l.repo.ListNotificationEmails(ctx)
+		if err != nil {
+			return nil, err
+		}
+		l.emails, l.loaded = emails, true
+	}
+	notifications := make([]models.EmailNotification, 0, len(l.emails))
+	for _, recipient := range l.emails {
+		notifications = append(notifications, metricNotification(e, recipient))
+	}
+	return notifications, nil
 }

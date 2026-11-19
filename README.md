@@ -160,6 +160,10 @@ make backend/run
 
 - All settings are listed in [`.env.example`](.env.example). For HTTPS deployments,
   use `APP_ENV=production` and `COOKIE_SECURE=true`.
+- Ingestion is bounded by `INGEST_MAX_INFLIGHT` (default 60% of
+  `POSTGRES_MAX_OPEN_CONNS`). Over the limit, agents get `RESOURCE_EXHAUSTED`
+  with a 1–10 s retry delay and resend later from their buffer, so the
+  dashboard keeps database connections during a recovery storm.
 - Central retention is disabled by default. Set the `RETENTION_*_DAYS` values to
   enable it; `CLEANUP_INTERVAL` and `CLEANUP_BATCH_SIZE` control scheduled cleanup.
 - Back up PostgreSQL and stop the backend before upgrading an existing database:

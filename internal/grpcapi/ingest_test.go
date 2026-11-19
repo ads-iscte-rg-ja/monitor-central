@@ -72,7 +72,7 @@ func (f *fakeRepo) CreateErrorLogs(_ context.Context, _ int64, logs []*models.Er
 func client(t *testing.T, repo *fakeRepo, key string) ingestv1.IngestServiceClient {
 	t.Helper()
 	listener := bufconn.Listen(4 << 20)
-	server := NewServer(services.NewIngestionService(repo), log.New(io.Discard, "", 0), nil, nil)
+	server := NewServer(services.NewIngestionService(repo), log.New(io.Discard, "", 0), nil, nil, 0)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -300,7 +300,7 @@ func TestHandlersRequireTheAuthenticatedHost(t *testing.T) {
 func TestIngestionIsMeasured(t *testing.T) {
 	metrics := observability.NewMetrics(nil, observability.Options{})
 	listener := bufconn.Listen(1 << 20)
-	server := NewServer(services.NewIngestionService(&fakeRepo{duplicates: 1}), log.New(io.Discard, "", 0), metrics, nil)
+	server := NewServer(services.NewIngestionService(&fakeRepo{duplicates: 1}), log.New(io.Discard, "", 0), metrics, nil, 0)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",

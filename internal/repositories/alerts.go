@@ -421,26 +421,23 @@ func (r *AlertsRepository) CreateAlertEventWithNotifications(ctx context.Context
 	return true, tx.Commit()
 }
 
-func (r *AlertsRepository) ResolveOpenAlertEvents(
-	ctx context.Context,
-	alertID int64,
-	hostID int64,
-) error {
-	_, err := r.db.ExecContext(
-		ctx,
-		`UPDATE alert_events
-		 SET status = 'resolved',
-		     resolved_at = CURRENT_TIMESTAMP
-		 WHERE alert_id = $1
-		   AND host_id = $2
-		   AND status IN (
-			'fired',
-			'acknowledged'
-		   )`,
-		alertID,
-		hostID,
-	)
-
+// ResolveOpenAlertEvents resolves the open events of every (alert, host) pair
+// with one statement (ADR-0005).
+func (r *AlertsRepository) ResolveOpenAlertEvents(ctx context.Context, targets []models.AlertTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	alerts := make([]int64, len(targets))
+	hosts := make([]int64, len(targets))
+	for i, t := range targets {
+		alerts[i], hosts[i] = t.AlertID, t.HostID
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE alert_events e
+		 SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP
+		 FROM unnest($1::bigint[], $2::bigint[]) AS t(alert_id, host_id)
+		 WHERE e.alert_id = t.alert_id AND e.host_id = t.host_id
+		   AND e.status IN ('fired', 'acknowledged')`,
+		pq.Array(alerts), pq.Array(hosts))
 	return err
 }
 
