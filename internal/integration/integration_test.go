@@ -390,3 +390,25 @@ func TestDemoSeedIsIdempotentAndMarked(t *testing.T) {
 		t.Fatal("demo cleanup touched real hosts or missed monitoring data")
 	}
 }
+
+func TestPendingNotificationsAreCounted(t *testing.T) {
+	db := isolatedDB(t)
+	migrate(t, db)
+	ctx := context.Background()
+	repo := repositories.NewAlertsRepository(db)
+	if n, err := repo.CountPendingNotifications(ctx); err != nil || n != 0 {
+		t.Fatalf("empty outbox: n=%d err=%v", n, err)
+	}
+	if err := repo.QueueNotifications(ctx, []models.EmailNotification{
+		{Recipient: "a@example.com", Subject: "a", TextBody: "t", HTMLBody: "h", DedupeKey: "count-a"},
+		{Recipient: "b@example.com", Subject: "b", TextBody: "t", HTMLBody: "h", DedupeKey: "count-b"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE email_outbox SET sent_at=NOW() WHERE dedupe_key='count-a'"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CountPendingNotifications(ctx); err != nil || n != 1 {
+		t.Fatalf("only unsent notifications count: n=%d err=%v", n, err)
+	}
+}
