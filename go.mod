@@ -17,6 +17,7 @@ require (
 	github.com/ads-iscte-rg-ja/monitor-api v1.0.0
 	github.com/prometheus/client_golang v1.25.0
 	golang.org/x/text v0.44.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )
@@ -30,5 +31,4 @@ require (
 	github.com/prometheus/procfs v0.22.0 // indirect
 	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 )
