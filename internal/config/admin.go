@@ -39,6 +39,7 @@ func LoadAdminConfig() (*AdminConfig, error) {
 
 type ServerConfig struct {
 	Port         int
+	GRPCPort     int
 	FrontendPath string
 	CookieSecure bool
 }
@@ -48,6 +49,10 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if err != nil || port < 1 || port > 65535 {
 		return nil, fmt.Errorf("PORT must be between 1 and 65535")
 	}
+	grpcPort, err := strconv.Atoi(GetEnv("GRPC_PORT", "3334"))
+	if err != nil || grpcPort < 1 || grpcPort > 65535 || grpcPort == port {
+		return nil, fmt.Errorf("GRPC_PORT must be between 1 and 65535 and differ from PORT")
+	}
 	secure, err := strconv.ParseBool(GetEnv("COOKIE_SECURE", "true"))
 	if err != nil {
 		return nil, fmt.Errorf("COOKIE_SECURE must be true or false")
@@ -55,5 +60,5 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if GetEnv("APP_ENV", "development") == "production" && !secure {
 		return nil, fmt.Errorf("production requires COOKIE_SECURE=true")
 	}
-	return &ServerConfig{Port: port, FrontendPath: GetEnv("FRONTEND_PATH", "frontend"), CookieSecure: secure}, nil
+	return &ServerConfig{Port: port, GRPCPort: grpcPort, FrontendPath: GetEnv("FRONTEND_PATH", "frontend"), CookieSecure: secure}, nil
 }

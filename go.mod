@@ -1,6 +1,6 @@
 module monitor-central
 
-go 1.25.0
+go 1.26.0
 
 toolchain go1.27.4
 
@@ -10,7 +10,18 @@ require (
 	github.com/go-chi/chi/v5 v5.0.11
 	github.com/lib/pq v1.11.1
 	github.com/wneessen/go-mail v0.7.2
-	golang.org/x/crypto v0.47.0
+	golang.org/x/crypto v0.59.0
 )
 
-require golang.org/x/text v0.41.0
+require (
+	github.com/ads-iscte-rg-ja/monitor-api v1.0.0
+	golang.org/x/text v0.44.0
+	google.golang.org/grpc v1.85.0
+	google.golang.org/protobuf v1.36.12
+)
+
+require (
+	golang.org/x/net v0.63.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
+)

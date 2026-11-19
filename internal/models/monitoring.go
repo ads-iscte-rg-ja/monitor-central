@@ -25,6 +25,7 @@ var (
 	ErrMissingEnvironment    = errors.New("environment is required")
 	ErrInvalidErrorLevel     = errors.New("invalid error level")
 	ErrMissingErrorMessage   = errors.New("error message is required")
+	ErrInvalidMetadata       = errors.New("error metadata must be valid JSON")
 	ErrInvalidMetricsRange   = errors.New("invalid metrics range")
 	ErrHostNameRequired      = errors.New("host name is required")
 	ErrHostnameRequired      = errors.New("hostname is required")

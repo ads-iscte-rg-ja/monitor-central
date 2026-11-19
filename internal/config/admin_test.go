@@ -47,3 +47,19 @@ func TestProductionCookieConfiguration(t *testing.T) {
 		t.Fatalf("secure setting rejected: %v", err)
 	}
 }
+
+func TestGRPCPortConfiguration(t *testing.T) {
+	t.Setenv("PORT", "3333")
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("COOKIE_SECURE", "false")
+	for _, port := range []string{"0", "65536", "not-a-port", "3333"} {
+		t.Setenv("GRPC_PORT", port)
+		if _, err := LoadServerConfig(); err == nil {
+			t.Fatalf("GRPC_PORT=%s accepted (must be a valid port different from PORT)", port)
+		}
+	}
+	t.Setenv("GRPC_PORT", "3334")
+	if cfg, err := LoadServerConfig(); err != nil || cfg.GRPCPort != 3334 {
+		t.Fatalf("valid GRPC_PORT rejected: %v", err)
+	}
+}

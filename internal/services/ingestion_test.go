@@ -157,3 +157,14 @@ func TestErrorsHostScopeAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestErrorMetadataMustBeValidJSON(t *testing.T) {
+	s := NewIngestionService(&fakeIngestionRepository{})
+	_, _, err := s.IngestErrors(context.Background(), 7, &models.ErrorLogsRequest{Errors: []models.ErrorLogInput{
+		{ID: 1, AppName: "app", Environment: "prod", Level: "ERROR", Message: "boom", Metadata: []byte("{")},
+	}})
+	var record *models.RecordValidationError
+	if !errors.As(err, &record) || record.SourceID != 1 || !errors.Is(err, models.ErrInvalidMetadata) {
+		t.Fatalf("invalid metadata must be its own record-level error, got %v", err)
+	}
+}
