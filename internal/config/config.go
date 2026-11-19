@@ -144,7 +144,7 @@ func LoadDBConfig() (*DBConfig, error) {
 		Password:        password,
 		Name:            name,
 		SSLMode:         GetEnv("POSTGRES_SSLMODE", "disable"),
-		MaxOpenConns:    GetEnvInt("POSTGRES_MAX_OPEN_CONNS", 25),
+		MaxOpenConns:    GetEnvInt("POSTGRES_MAX_OPEN_CONNS", 20),
 		MaxIdleConns:    GetEnvInt("POSTGRES_MAX_IDLE_CONNS", 5),
 		ConnMaxLifetime: 5 * time.Minute,
 	}, nil

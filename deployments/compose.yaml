@@ -18,6 +18,8 @@ x-central: &central
     # (Prometheus); on the host it is published on loopback only.
     METRICS_ADDR: ":9464"
     FRONTEND_PATH: /app/frontend
+    # Only the load balancer may report the client address (ADR-0007).
+    TRUSTED_PROXIES: 172.31.250.10
 
 services:
   postgres:
@@ -59,10 +61,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    # Reached through the load balancer, so it can be scaled
+    # (docker compose up -d --scale backend=3, ADR-0007). Metrics are published
+    # on an ephemeral loopback port per replica: docker compose port backend 9464.
     ports:
-      - "127.0.0.1:${PORT:-3333}:3333"
-      - "127.0.0.1:${GRPC_PORT:-3334}:3334"
-      - "127.0.0.1:${METRICS_PORT:-9464}:9464"
+      - "127.0.0.1::9464"
     restart: unless-stopped
     stop_grace_period: 45s
     healthcheck:
@@ -71,6 +74,22 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+
+  # Load balancer for HTTP and gRPC ingestion (ADR-0007).
+  nginx:
+    image: nginx:1.28.0-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:${PORT:-3333}:3333"
+      - "127.0.0.1:${GRPC_PORT:-3334}:3334"
+    networks:
+      default:
+        ipv4_address: 172.31.250.10
+    restart: unless-stopped
 
   # Profile "observability" (ADR-0004): metrics dashboards for load tests and
   # demos only. Start with: docker compose --profile observability up -d
@@ -98,6 +117,13 @@ services:
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     restart: unless-stopped
+
+# Fixed subnet so the backend can trust exactly the load balancer's address.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
 
 volumes:
   postgres_data:

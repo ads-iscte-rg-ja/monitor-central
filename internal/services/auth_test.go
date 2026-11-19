@@ -35,24 +35,59 @@ type authAudit struct{}
 
 func (authAudit) Create(context.Context, int64, string, string) error { return nil }
 
-func TestLoginLimiterAccountIPAndExpiry(t *testing.T) {
+// memoryAttempts is an in-process LoginAttemptStore for unit tests; the real
+// one is shared in PostgreSQL (integration tests).
+type memoryAttempts struct {
+	counts map[string]int
+	err    error
+}
+
+func (m *memoryAttempts) CountAttempts(_ context.Context, keys [][]byte, _ time.Duration) ([]int, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.counts == nil {
+		m.counts = map[string]int{}
+	}
+	out := make([]int, len(keys))
+	for i, k := range keys {
+		m.counts[string(k)]++
+		out[i] = m.counts[string(k)]
+	}
+	return out, nil
+}
+
+func allowed(t *testing.T, l *loginLimiter, ip, account string) bool {
+	t.Helper()
+	ok, err := l.allow(context.Background(), ip, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
+}
+
+func TestLoginLimiterAccountAndIP(t *testing.T) {
 	limits := config.LoginConfig{PerIP: 2, PerAccount: 2, MaxConcurrent: 1}
-	l := newLoginLimiter(limits)
-	now := time.Now()
-	if !l.allow("ip1", "account1", now) || !l.allow("ip2", "account1", now) || l.allow("ip3", "account1", now) {
+	l := newLoginLimiter(limits, &memoryAttempts{})
+	if !allowed(t, l, "ip1", "account1") || !allowed(t, l, "ip2", "account1") || allowed(t, l, "ip3", "account1") {
 		t.Fatal("account limit bypassed across IPs")
 	}
-	l = newLoginLimiter(limits)
-	if !l.allow("ip1", "account1", now) || !l.allow("ip1", "account2", now) || l.allow("ip1", "account3", now) {
+	l = newLoginLimiter(limits, &memoryAttempts{})
+	if !allowed(t, l, "ip1", "account1") || !allowed(t, l, "ip1", "account2") || allowed(t, l, "ip1", "account3") {
 		t.Fatal("IP limit bypassed across accounts")
 	}
-	if !l.allow("ip1", "account3", now.Add(time.Minute)) {
-		t.Fatal("expired window did not reset")
+}
+
+func TestLoginFailsClosedWhenAttemptsCannotBeCounted(t *testing.T) {
+	store := &memoryAttempts{err: errors.New("database down")}
+	s := NewAuthService(&authUsers{}, authAudit{}, log.New(io.Discard, "", 0), config.LoginConfig{PerIP: 20, PerAccount: 5, MaxConcurrent: 1}, store)
+	if _, err := s.Login(context.Background(), &models.LoginRequest{Email: "a@example.com", Password: "x"}, "ip1"); err == nil || errors.Is(err, models.ErrInvalidCredentials) {
+		t.Fatalf("without the shared count the login must fail, got %v", err)
 	}
 }
 
 func TestMissingUserUsesConfiguredBcryptCost(t *testing.T) {
-	s := NewAuthService(&authUsers{}, authAudit{}, log.New(io.Discard, "", 0), config.LoginConfig{PerIP: 20, PerAccount: 5, MaxConcurrent: 1})
+	s := NewAuthService(&authUsers{}, authAudit{}, log.New(io.Discard, "", 0), config.LoginConfig{PerIP: 20, PerAccount: 5, MaxConcurrent: 1}, &memoryAttempts{})
 	cost, err := bcrypt.Cost(s.dummyHash)
 	if err != nil || cost != config.BcryptCost {
 		t.Fatal("dummy hash cost differs", err)
@@ -69,7 +104,7 @@ func TestMissingUserUsesConfiguredBcryptCost(t *testing.T) {
 
 func TestLoginWorkIsBounded(t *testing.T) {
 	u := &authUsers{entered: make(chan struct{}, 1), release: make(chan struct{})}
-	s := NewAuthService(u, authAudit{}, log.New(io.Discard, "", 0), config.LoginConfig{PerIP: 20, PerAccount: 5, MaxConcurrent: 1})
+	s := NewAuthService(u, authAudit{}, log.New(io.Discard, "", 0), config.LoginConfig{PerIP: 20, PerAccount: 5, MaxConcurrent: 1}, &memoryAttempts{})
 	done := make(chan error, 1)
 	go func() {
 		_, err := s.Login(context.Background(), &models.LoginRequest{Email: "one@example.com", Password: "wrong"}, "ip1")

@@ -45,7 +45,15 @@ type Server struct {
 	retentionConfig   config.RetentionConfig
 	alertsService     *services.AlertsService
 	hostHealthService *services.HostHealthService
+	role              config.Role
+	elector           jobLeader
 	wg                sync.WaitGroup
+}
+
+// jobLeader decides whether this instance runs a background job (ADR-0007).
+type jobLeader interface {
+	Lead(ctx context.Context, job string) (bool, error)
+	Close()
 }
 
 func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConfig) (*Server, error) {
@@ -55,6 +63,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 	}
 	serverConfig, hasher, loginConfig, retentionConfig, dbConfig, ingestConfig :=
 		cfg.server, cfg.hasher, cfg.login, cfg.retention, cfg.db, cfg.ingest
+	scaling := cfg.scaling
 
 	// Initialize Database
 	db, err := database.New(dbConfig, logger)
@@ -114,7 +123,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 	sessionManager := session.NewSessionManager(sessionStore, sessionConfig)
 
 	// Initialize Services
-	authService := services.NewAuthService(userRepo, auditRepo, logger, loginConfig)
+	authService := services.NewAuthService(userRepo, auditRepo, logger, loginConfig, repositories.NewLoginAttemptsRepository(db))
 	userService := services.NewUserService(userRepo, auditRepo, logger)
 	ingestionService := services.NewIngestionService(monitoringRepo)
 	dashboardService := services.NewDashboardService(dashboardRepo)
@@ -160,6 +169,8 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 	r := chi.NewRouter()
 
 	// Middleware
+	// Behind the load balancer, the client address comes from the trusted proxy (ADR-0007).
+	r.Use(middleware.TrustedProxies(scaling.TrustedProxies))
 	r.Use(chimiddleware.RequestID)
 	r.Use(metrics.HTTPMiddleware(slogger))
 	r.Use(chimiddleware.Recoverer)
@@ -197,7 +208,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", serverConfig.Port),
-		Handler:      r,
+		Handler:      httpHandler(scaling.Role, r, healthHandler.HealthCheck),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -220,6 +231,8 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 		retentionConfig:   retentionConfig,
 		alertsService:     alertsService,
 		hostHealthService: services.NewHostHealthService(hostsRepo),
+		role:              scaling.Role,
+		elector:           database.NewElector(db),
 	}, nil
 }
 
@@ -229,10 +242,10 @@ func (s *Server) Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", s.srv.Addr, err)
 	}
-	grpcLn, err := net.Listen("tcp", s.grpcAddr)
+	grpcLn, err := s.listenGRPC()
 	if err != nil {
 		_ = ln.Close()
-		return fmt.Errorf("failed to listen on %s: %w", s.grpcAddr, err)
+		return err
 	}
 	stopMetrics, err := s.startMetrics()
 	if err != nil {
@@ -245,7 +258,9 @@ func (s *Server) Run() error {
 	// Start background jobs
 	ctxBg, cancelBg := context.WithCancel(context.Background())
 	defer func() { cancelBg(); s.wg.Wait() }()
-	s.startBackgroundJobs(ctxBg)
+	if s.role.RunsJobs() {
+		s.startBackgroundJobs(ctxBg)
+	}
 
 	errChan := make(chan error, 2)
 
@@ -255,12 +270,14 @@ func (s *Server) Run() error {
 			errChan <- err
 		}
 	}()
-	go func() {
-		log.Printf("gRPC ingestion starting on %s", s.grpcAddr)
-		if err := s.grpcSrv.Serve(grpcLn); err != nil && err != grpc.ErrServerStopped {
-			errChan <- fmt.Errorf("grpc: %w", err)
-		}
-	}()
+	if grpcLn != nil {
+		go func() {
+			log.Printf("gRPC ingestion starting on %s", s.grpcAddr)
+			if err := s.grpcSrv.Serve(grpcLn); err != nil && err != grpc.ErrServerStopped {
+				errChan <- fmt.Errorf("grpc: %w", err)
+			}
+		}()
+	}
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
@@ -300,7 +317,30 @@ func (s *Server) Run() error {
 	return nil
 }
 
-func (s *Server) Close() { s.sessionStore.StopCleanup(); _ = s.db.Close() }
+// Close gives up the job leads first, so another instance takes over at once.
+func (s *Server) Close() { s.elector.Close(); s.sessionStore.StopCleanup(); _ = s.db.Close() }
+
+// httpHandler is the full application, or only the health check for a worker (ADR-0007).
+func httpHandler(role config.Role, app http.Handler, health http.HandlerFunc) http.Handler {
+	if role.Serves() {
+		return app
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", health)
+	return mux
+}
+
+// listenGRPC opens the ingestion listener, or none for a worker (ADR-0007).
+func (s *Server) listenGRPC() (net.Listener, error) {
+	if !s.role.Serves() {
+		return nil, nil
+	}
+	ln, err := net.Listen("tcp", s.grpcAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s: %w", s.grpcAddr, err)
+	}
+	return ln, nil
+}
 
 // newMetricsServer serves /metrics on its own listener (ADR-0004); an empty
 // address disables it.
@@ -341,6 +381,7 @@ type settings struct {
 	retention config.RetentionConfig
 	db        *config.DBConfig
 	ingest    *config.IngestConfig
+	scaling   *config.ScalingConfig
 }
 
 func loadSettings() (*settings, error) {
@@ -369,6 +410,9 @@ func loadSettings() (*settings, error) {
 		return nil, fmt.Errorf("failed to load database config: %w", err)
 	}
 	if s.ingest, err = config.LoadIngestConfig(s.db.MaxOpenConns); err != nil {
+		return nil, err
+	}
+	if s.scaling, err = config.LoadScalingConfig(); err != nil {
 		return nil, err
 	}
 	return &s, nil

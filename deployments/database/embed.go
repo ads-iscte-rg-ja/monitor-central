@@ -13,5 +13,8 @@ var SecurityRetentionSQL string
 //go:embed migrations/003_host_health.sql
 var HostHealthSQL string
 
+//go:embed migrations/004_login_attempts.sql
+var LoginAttemptsSQL string
+
 //go:embed migrations/legacy_text_to_numeric.sql
 var LegacyTextToNumericSQL string
