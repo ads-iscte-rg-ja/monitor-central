@@ -116,7 +116,6 @@ var protectedPaths = map[string]bool{
 	"/alerts":           true,
 	"/hosts":            true,
 	"/api/v1/dashboard": true,
-	"/api/v1/ingest":    true,
 }
 
 func printRoutes(r chi.Router, logger *log.Logger) {

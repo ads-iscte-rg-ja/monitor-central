@@ -174,7 +174,7 @@ func prepareErrorLog(hostID int64, input models.ErrorLogInput, now time.Time) (*
 		return nil, models.ErrFieldTooLarge
 	}
 	if len(input.Metadata) > 0 && !json.Valid(input.Metadata) {
-		return nil, models.ErrFieldTooLarge
+		return nil, models.ErrInvalidMetadata
 	}
 	created := input.CreatedAt
 	if created.IsZero() {

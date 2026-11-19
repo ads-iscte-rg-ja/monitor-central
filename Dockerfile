@@ -23,7 +23,7 @@ WORKDIR /app
 COPY --from=build /out/ /app/bin/
 COPY --from=build /src/frontend/ /app/frontend/
 
-ENV PORT=3333 FRONTEND_PATH=/app/frontend
+ENV PORT=3333 GRPC_PORT=3334 FRONTEND_PATH=/app/frontend
 USER 65532:65532
-EXPOSE 3333
+EXPOSE 3333 3334
 CMD ["/app/bin/app"]

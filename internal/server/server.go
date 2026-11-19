@@ -15,6 +15,7 @@ import (
 
 	"monitor-central/internal/config"
 	"monitor-central/internal/database"
+	"monitor-central/internal/grpcapi"
 	"monitor-central/internal/handlers"
 	"monitor-central/internal/repositories"
 	"monitor-central/internal/services"
@@ -26,12 +27,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"google.golang.org/grpc"
 )
 
 type Server struct {
 	db                *database.DB
 	sessionStore      *repositories.SessionStore
 	srv               *http.Server
+	grpcSrv           *grpc.Server
+	grpcAddr          string
 	logger            *log.Logger
 	retentionRepo     *repositories.RetentionRepository
 	retentionConfig   config.RetentionConfig
@@ -143,7 +147,6 @@ func New(logger *log.Logger) (*Server, error) {
 	userHandler := handlers.NewUserHandler(userService, sessionManager, tb, logger)
 	healthHandler := handlers.NewHealthHandler(services.NewHealthService(db))
 	legalHandler := handlers.NewLegalHandler(tb, sessionManager)
-	ingestionHandler := handlers.NewIngestionHandler(ingestionService)
 	dashboardHandler := handlers.NewDashboardHandler(
 		dashboardService,
 		tb,
@@ -174,12 +177,6 @@ func New(logger *log.Logger) (*Server, error) {
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(60 * time.Second))
-	// Machine API authentication is first, outside browser/session middleware.
-	r.Route("/api/v1/ingest", func(r chi.Router) {
-		r.Use(middleware.RequireHost(ingestionService))
-		r.Post("/stats", ingestionHandler.IngestStats)
-		r.Post("/errors", ingestionHandler.IngestErrors)
-	})
 	r.Group(func(r chi.Router) {
 		r.Use(sessionManager.LoadAndSave)
 		r.Use(mdw.CSRF())
@@ -221,9 +218,12 @@ func New(logger *log.Logger) (*Server, error) {
 
 	ready = true
 	return &Server{
-		db:                db,
-		sessionStore:      sessionStore,
-		srv:               srv,
+		db:           db,
+		sessionStore: sessionStore,
+		srv:          srv,
+		// Telemetry ingestion is served over gRPC on its own port (ADR-0003).
+		grpcSrv:           grpcapi.NewServer(ingestionService, logger),
+		grpcAddr:          fmt.Sprintf(":%d", serverConfig.GRPCPort),
 		logger:            logger,
 		retentionRepo:     repositories.NewRetentionRepository(db),
 		retentionConfig:   retentionConfig,
@@ -238,18 +238,29 @@ func (s *Server) Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", s.srv.Addr, err)
 	}
+	grpcLn, err := net.Listen("tcp", s.grpcAddr)
+	if err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("failed to listen on %s: %w", s.grpcAddr, err)
+	}
 
 	// Start background jobs
 	ctxBg, cancelBg := context.WithCancel(context.Background())
 	defer func() { cancelBg(); s.wg.Wait() }()
 	s.startBackgroundJobs(ctxBg)
 
-	errChan := make(chan error, 1)
+	errChan := make(chan error, 2)
 
 	go func() {
 		log.Printf("Server starting on %s", s.srv.Addr)
 		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errChan <- err
+		}
+	}()
+	go func() {
+		log.Printf("gRPC ingestion starting on %s", s.grpcAddr)
+		if err := s.grpcSrv.Serve(grpcLn); err != nil && err != grpc.ErrServerStopped {
+			errChan <- fmt.Errorf("grpc: %w", err)
 		}
 	}()
 
@@ -259,6 +270,7 @@ func (s *Server) Run() error {
 
 	select {
 	case err := <-errChan:
+		s.grpcSrv.Stop()
 		return fmt.Errorf("server error: %w", err)
 	case sig := <-signalChan:
 		log.Printf("Received %v, initiating graceful shutdown...", sig)
@@ -267,9 +279,19 @@ func (s *Server) Run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Stop accepting telemetry and let in-flight batches finish within the same
+	// deadline; an unfinished batch is simply retried by the agent (at-least-once).
+	grpcDone := make(chan struct{})
+	go func() { s.grpcSrv.GracefulStop(); close(grpcDone) }()
 	if err := s.srv.Shutdown(ctx); err != nil {
+		s.grpcSrv.Stop()
 		log.Printf("Server forced to shutdown: %v", err)
 		return err
+	}
+	select {
+	case <-grpcDone:
+	case <-ctx.Done():
+		s.grpcSrv.Stop()
 	}
 
 	// Stop background jobs

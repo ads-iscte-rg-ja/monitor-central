@@ -10,7 +10,7 @@ Monitored host
   Application → monitor-go-sdk → SQLite buffer ← CPU/RAM/disk collection
                                      │
                                monitor-remote
-                                     │ authenticated HTTP batches
+                                     │ authenticated gRPC batches
                                      ▼
                                monitor-central ───→ PostgreSQL
                                      │
@@ -27,8 +27,10 @@ Monitored host
 - **Remote** initializes that buffer, collects resources, and delivers telemetry.
   It flushes the starting backlog newest first, in batches of up to 100. Records
   remain pending until central acknowledges them; invalid records are quarantined.
-- **Central** authenticates each host with its API key, validates batches, and
-  commits telemetry and deduplication receipts together. Persistent source IDs
+- **Central** receives telemetry over gRPC (contract and error codes in
+  [monitor-api](https://github.com/ads-iscte-rg-ja/monitor-api)), authenticates each
+  host with its API key, validates batches, and commits telemetry and
+  deduplication receipts together. Persistent source IDs
   make retries safe.
 - **Background jobs** check host availability, evaluate alerts, deliver queued
   email with retries, run retention cleanup, and prepare daily summaries. They
@@ -45,7 +47,7 @@ commit in one transaction; SMTP delivery happens separately and is at-least-once
 
 | Area | Technology |
 | --- | --- |
-| Backend | Go 1.25+, standard `net/http`, Chi router |
+| Backend | Go 1.26+, standard `net/http` and Chi (dashboard), gRPC (telemetry ingestion) |
 | Central storage | PostgreSQL 16, `database/sql`, `lib/pq`, embedded SQL migrations |
 | Frontend | Go `html/template`, vanilla JavaScript, SVG charts, Tailwind CSS from CDN |
 | Authentication | SCS PostgreSQL-backed sessions, bcrypt passwords, HMAC-SHA256 host-key digests |
@@ -57,7 +59,7 @@ Central serves the frontend itself; no Node or frontend build is required.
 
 ## Setup and run
 
-Requirements: **Go 1.25+**, **Make**, **Docker with Compose**, and a reachable
+Requirements: **Go 1.26+**, **Make**, **Docker with Compose**, and a reachable
 **SMTP server**. Run the following commands from `monitor-central/`.
 
 ### 1. Configure the environment
@@ -99,8 +101,10 @@ Compose starts PostgreSQL, runs migrations, then starts the backend. Administrat
 seeding is explicit; rerunning it updates that account and revokes its sessions.
 
 Open **http://localhost:3333** and sign in with the configured administrator.
-The dashboard and database ports are published on loopback only. `PORT` changes
-the dashboard's host port; PostgreSQL uses `5433`.
+The dashboard, gRPC ingestion, and database ports are published on loopback only.
+`PORT` changes the dashboard's host port and `GRPC_PORT` the ingestion port
+(default `3334`); PostgreSQL uses `5433`. Agents outside the host reach ingestion
+through a TLS reverse proxy that supports HTTP/2.
 
 ### 3. Register a host
 
@@ -148,8 +152,9 @@ make backend/run
   ```
 
 See [database setup and migrations](deployments/database/README.md) for details.
-The current schema version is **3**. Keep central and remote on the same batch
-protocol, and preserve each host's SQLite buffer across restarts.
+The current schema version is **3**. Keep central and remote on compatible
+versions of the `monitor-api` contract, and preserve each host's SQLite buffer
+across restarts.
 
 Recent health, buffering, and delivery changes await executable verification.
 See the [implementation checklist](../IMPLEMENTATION_CHECKLIST.md) for status.
