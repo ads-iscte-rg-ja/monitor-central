@@ -49,35 +49,12 @@ type Server struct {
 }
 
 func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConfig) (*Server, error) {
-	// Load App Configuration
-	if err := config.LoadEnv(".env"); err != nil {
-		return nil, fmt.Errorf("load environment: %w", err)
-	}
-	serverConfig, err := config.LoadServerConfig()
+	cfg, err := loadSettings()
 	if err != nil {
 		return nil, err
 	}
-	secret, err := config.LoadAPIKeySecret()
-	if err != nil {
-		return nil, err
-	}
-	hasher, err := apikey.New(secret)
-	if err != nil {
-		return nil, err
-	}
-	loginConfig, err := config.LoadLoginConfig()
-	if err != nil {
-		return nil, err
-	}
-	retentionConfig, err := config.LoadRetentionConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	dbConfig, err := config.LoadDBConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load database config: %w", err)
-	}
+	serverConfig, hasher, loginConfig, retentionConfig, dbConfig, ingestConfig :=
+		cfg.server, cfg.hasher, cfg.login, cfg.retention, cfg.db, cfg.ingest
 
 	// Initialize Database
 	db, err := database.New(dbConfig, logger)
@@ -234,7 +211,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 		sessionStore: sessionStore,
 		srv:          srv,
 		// Telemetry ingestion is served over gRPC on its own port (ADR-0003).
-		grpcSrv:           grpcapi.NewServer(ingestionService, logger, metrics, slogger),
+		grpcSrv:           grpcapi.NewServer(ingestionService, logger, metrics, slogger, ingestConfig.MaxInflight),
 		metrics:           metrics,
 		metricsSrv:        metricsSrv,
 		grpcAddr:          fmt.Sprintf(":%d", serverConfig.GRPCPort),
@@ -353,4 +330,46 @@ func (s *Server) startMetrics() (func(), error) {
 		}
 	}()
 	return func() { _ = s.metricsSrv.Close() }, nil
+}
+
+// settings is every configuration the server needs, loaded and validated
+// before anything is started.
+type settings struct {
+	server    *config.ServerConfig
+	hasher    *apikey.Hasher
+	login     config.LoginConfig
+	retention config.RetentionConfig
+	db        *config.DBConfig
+	ingest    *config.IngestConfig
+}
+
+func loadSettings() (*settings, error) {
+	if err := config.LoadEnv(".env"); err != nil {
+		return nil, fmt.Errorf("load environment: %w", err)
+	}
+	var s settings
+	var err error
+	if s.server, err = config.LoadServerConfig(); err != nil {
+		return nil, err
+	}
+	secret, err := config.LoadAPIKeySecret()
+	if err != nil {
+		return nil, err
+	}
+	if s.hasher, err = apikey.New(secret); err != nil {
+		return nil, err
+	}
+	if s.login, err = config.LoadLoginConfig(); err != nil {
+		return nil, err
+	}
+	if s.retention, err = config.LoadRetentionConfig(); err != nil {
+		return nil, err
+	}
+	if s.db, err = config.LoadDBConfig(); err != nil {
+		return nil, fmt.Errorf("failed to load database config: %w", err)
+	}
+	if s.ingest, err = config.LoadIngestConfig(s.db.MaxOpenConns); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }

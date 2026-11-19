@@ -126,8 +126,17 @@ func TestGRPCInterceptorCountsByCodeAndLogsTheHost(t *testing.T) {
 	}
 }
 
+func TestInflightGaugeFollowsAdmissions(t *testing.T) {
+	m := NewMetrics(nil, Options{})
+	m.AddInflight(1)
+	m.AddInflight(1)
+	m.AddInflight(-1)
+	requireLines(t, scrape(t, m), "monitor_ingest_inflight 1")
+}
+
 func TestNilMetricsAreANoOp(t *testing.T) {
 	var m *Metrics
+	m.AddInflight(1)
 	m.RecordIngest("stats", 1, 0, 0, nil)
 	m.ObserveJob("x", time.Now(), nil)
 	w := httptest.NewRecorder()

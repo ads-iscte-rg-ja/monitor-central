@@ -78,3 +78,25 @@ func TestObservabilityConfiguration(t *testing.T) {
 		t.Fatal("METRICS_ADDR without host:port accepted")
 	}
 }
+
+func TestIngestAdmissionLimit(t *testing.T) {
+	if cfg, err := LoadIngestConfig(25); err != nil || cfg.MaxInflight != 15 {
+		t.Fatalf("default must be 60%% of the pool (15 of 25): %+v %v", cfg, err)
+	}
+	if cfg, err := LoadIngestConfig(2); err != nil || cfg.MaxInflight != 1 {
+		t.Fatalf("small pools keep at least one ingestion slot: %+v %v", cfg, err)
+	}
+	if _, err := LoadIngestConfig(1); err == nil {
+		t.Fatal("a pool of 1 leaves nothing for the dashboard")
+	}
+	for _, v := range []string{"0", "25", "26", "x"} {
+		t.Setenv("INGEST_MAX_INFLIGHT", v)
+		if _, err := LoadIngestConfig(25); err == nil {
+			t.Fatalf("INGEST_MAX_INFLIGHT=%s accepted with a pool of 25", v)
+		}
+	}
+	t.Setenv("INGEST_MAX_INFLIGHT", "20")
+	if cfg, err := LoadIngestConfig(25); err != nil || cfg.MaxInflight != 20 {
+		t.Fatalf("explicit limit rejected: %+v %v", cfg, err)
+	}
+}

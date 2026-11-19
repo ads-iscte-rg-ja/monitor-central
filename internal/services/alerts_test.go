@@ -45,8 +45,8 @@ func (f *fakeAlertsRepository) CreateAlertEventWithNotifications(_ context.Conte
 	f.notifications = append(f.notifications, n...)
 	return true, nil
 }
-func (f *fakeAlertsRepository) ResolveOpenAlertEvents(context.Context, int64, int64) error {
-	f.resolved = true
+func (f *fakeAlertsRepository) ResolveOpenAlertEvents(_ context.Context, targets []models.AlertTarget) error {
+	f.resolved = len(targets) > 0
 	return nil
 }
 func (f *fakeAlertsRepository) ListNotificationEmails(context.Context) ([]string, error) {

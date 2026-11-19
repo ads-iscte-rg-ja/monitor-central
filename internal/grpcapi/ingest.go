@@ -36,14 +36,15 @@ type IngestServer struct {
 
 // NewServer builds the gRPC server for ingestion: host authentication runs in an
 // interceptor before any handler, and messages above the contract limit are
-// rejected by gRPC itself with RESOURCE_EXHAUSTED. The metrics interceptor is
-// outermost so authentication failures are measured and logged too (ADR-0004).
-// metrics and slogger may be nil.
-func NewServer(service *services.IngestionService, logger *log.Logger, metrics *observability.Metrics, slogger *slog.Logger) *grpc.Server {
+// rejected by gRPC itself with RESOURCE_EXHAUSTED. Interceptors, outermost
+// first: metrics (so rejections are measured and logged too, ADR-0004), the
+// admission limit (before authentication touches the database, ADR-0006), and
+// authentication. metrics and slogger may be nil; maxInflight <= 0 means no limit.
+func NewServer(service *services.IngestionService, logger *log.Logger, metrics *observability.Metrics, slogger *slog.Logger, maxInflight int) *grpc.Server {
 	server := grpc.NewServer(
 		grpc.MaxRecvMsgSize(ingestv1.MaxMessageBytes),
 		grpc.InTapHandle(requireKeyHeader),
-		grpc.ChainUnaryInterceptor(metrics.GRPCInterceptor(slogger), authenticateHost(service, logger)),
+		grpc.ChainUnaryInterceptor(metrics.GRPCInterceptor(slogger), admit(maxInflight, metrics), authenticateHost(service, logger)),
 	)
 	ingestv1.RegisterIngestServiceServer(server, &IngestServer{service: service, logger: logger, metrics: metrics})
 	return server

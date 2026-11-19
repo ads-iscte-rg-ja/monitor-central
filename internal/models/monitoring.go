@@ -342,6 +342,12 @@ type UpdateAlertRequest struct {
 	Enabled   bool
 }
 
+// AlertTarget identifies one alert rule applied to one host.
+type AlertTarget struct {
+	AlertID int64
+	HostID  int64
+}
+
 type AlertMetricEvaluation struct {
 	AlertID      int64   `db:"alert_id"`
 	AlertName    string  `db:"alert_name"`

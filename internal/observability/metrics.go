@@ -31,6 +31,7 @@ type Metrics struct {
 	ingestRecords  *prometheus.CounterVec
 	ingestBatch    *prometheus.HistogramVec
 	ingestLag      *prometheus.HistogramVec
+	ingestInflight prometheus.Gauge
 	httpDuration   *prometheus.HistogramVec
 	jobDuration    *prometheus.HistogramVec
 	jobFailures    *prometheus.CounterVec
@@ -69,6 +70,10 @@ func NewMetrics(logger *slog.Logger, opts Options) *Metrics {
 			Help:    "Delay between a record's collection on the host and its storage in central.",
 			Buckets: []float64{.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600, 4 * 3600},
 		}, []string{"kind"}),
+		ingestInflight: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "ingest_inflight",
+			Help: "Ingestion requests being served now (bounded by INGEST_MAX_INFLIGHT, ADR-0006).",
+		}),
 		httpDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: namespace, Name: "http_request_duration_seconds",
 			Help:    "Duration of HTTP requests, by route pattern, method and status.",
@@ -89,7 +94,7 @@ func NewMetrics(logger *slog.Logger, opts Options) *Metrics {
 		}, []string{"job"}),
 	}
 	m.registry.MustRegister(
-		m.ingestDuration, m.ingestRecords, m.ingestBatch, m.ingestLag,
+		m.ingestDuration, m.ingestRecords, m.ingestBatch, m.ingestLag, m.ingestInflight,
 		m.httpDuration, m.jobDuration, m.jobFailures, m.jobLastSuccess,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -127,6 +132,14 @@ func (m *Metrics) RecordIngest(kind string, inserted, duplicates, rejected int, 
 	for _, d := range lags {
 		lag.Observe(d.Seconds())
 	}
+}
+
+// AddInflight tracks the ingestion requests being served (+1 on admission, -1 when done).
+func (m *Metrics) AddInflight(delta int) {
+	if m == nil {
+		return
+	}
+	m.ingestInflight.Add(float64(delta))
 }
 
 // ObserveJob records one run of a background job.
