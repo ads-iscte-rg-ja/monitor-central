@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -48,21 +49,41 @@ func (r *RetentionRepository) Cleanup(ctx context.Context, c config.RetentionCon
 		if category.days == 0 {
 			continue
 		}
-		if category.days < 0 || category.days > 36500 {
-			return nil, fmt.Errorf("invalid retention days")
-		}
-		// All identifiers/predicates above are application constants, not user input.
-		//nolint:gosec // G201: only the constant table/predicate/order above are formatted; values go as $1/$2.
-		query := fmt.Sprintf(`WITH candidates AS (SELECT id FROM %s WHERE %s ORDER BY %s LIMIT $2 FOR UPDATE SKIP LOCKED)
- DELETE FROM %s WHERE id IN (SELECT id FROM candidates)`, category.table, category.predicate, category.order, category.table)
-		result, err := tx.ExecContext(ctx, query, now.AddDate(0, 0, -category.days), c.BatchSize)
-		if err != nil {
-			return nil, fmt.Errorf("cleanup %s: %w", category.table, err)
-		}
-		counts[category.table], err = result.RowsAffected()
-		if err != nil {
+		if counts[category.table], err = cleanupTable(ctx, tx, category.table, category.predicate, category.order, now, category.days, c.BatchSize); err != nil {
 			return nil, err
 		}
 	}
+	expired, err := cleanupLoginAttempts(ctx, tx, now, c.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	if expired > 0 {
+		counts["login_attempts"] = expired
+	}
 	return counts, tx.Commit()
+}
+
+// cleanupTable deletes at most limit rows of table older than days.
+func cleanupTable(ctx context.Context, tx *sql.Tx, table, predicate, order string, now time.Time, days, limit int) (int64, error) {
+	if days < 0 || days > 36500 {
+		return 0, fmt.Errorf("invalid retention days")
+	}
+	// All identifiers/predicates are application constants, not user input.
+	//nolint:gosec // G201: only the constant table/predicate/order are formatted; values go as $1/$2.
+	query := fmt.Sprintf(`WITH candidates AS (SELECT id FROM %s WHERE %s ORDER BY %s LIMIT $2 FOR UPDATE SKIP LOCKED)
+ DELETE FROM %s WHERE id IN (SELECT id FROM candidates)`, table, predicate, order, table)
+	result, err := tx.ExecContext(ctx, query, now.AddDate(0, 0, -days), limit)
+	if err != nil {
+		return 0, fmt.Errorf("cleanup %s: %w", table, err)
+	}
+	return result.RowsAffected()
+}
+
+// cleanupLoginAttempts deletes login limiter windows that have ended (ADR-0007).
+func cleanupLoginAttempts(ctx context.Context, tx *sql.Tx, now time.Time, limit int) (int64, error) {
+	result, err := tx.ExecContext(ctx, `DELETE FROM login_attempts WHERE key IN (SELECT key FROM login_attempts WHERE window_ends < $1 ORDER BY window_ends LIMIT $2 FOR UPDATE SKIP LOCKED)`, now, limit)
+	if err != nil {
+		return 0, fmt.Errorf("cleanup login_attempts: %w", err)
+	}
+	return result.RowsAffected()
 }

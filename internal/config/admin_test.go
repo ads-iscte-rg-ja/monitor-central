@@ -100,3 +100,33 @@ func TestIngestAdmissionLimit(t *testing.T) {
 		t.Fatalf("explicit limit rejected: %+v %v", cfg, err)
 	}
 }
+
+func TestScalingConfig(t *testing.T) {
+	cfg, err := LoadScalingConfig()
+	if err != nil || cfg.Role != RoleAll || !cfg.Role.Serves() || !cfg.Role.RunsJobs() || len(cfg.TrustedProxies) != 0 {
+		t.Fatalf("defaults must keep a single all-in-one instance: %+v %v", cfg, err)
+	}
+	t.Setenv("APP_ROLE", "web")
+	if cfg, err := LoadScalingConfig(); err != nil || !cfg.Role.Serves() || cfg.Role.RunsJobs() {
+		t.Fatalf("web serves and runs no jobs: %+v %v", cfg, err)
+	}
+	t.Setenv("APP_ROLE", "worker")
+	if cfg, err := LoadScalingConfig(); err != nil || cfg.Role.Serves() || !cfg.Role.RunsJobs() {
+		t.Fatalf("worker runs jobs and serves nothing: %+v %v", cfg, err)
+	}
+	t.Setenv("APP_ROLE", "leader")
+	if _, err := LoadScalingConfig(); err == nil {
+		t.Fatal("unknown role accepted")
+	}
+	t.Setenv("APP_ROLE", "")
+	t.Setenv("TRUSTED_PROXIES", " 172.28.0.10, 10.1.2.3/8 ,,2001:db8::1")
+	cfg, err = LoadScalingConfig()
+	if err != nil || len(cfg.TrustedProxies) != 3 || cfg.TrustedProxies[0].String() != "172.28.0.10/32" ||
+		cfg.TrustedProxies[1].String() != "10.0.0.0/8" || cfg.TrustedProxies[2].String() != "2001:db8::1/128" {
+		t.Fatalf("trusted proxies parsed wrongly: %+v %v", cfg, err)
+	}
+	t.Setenv("TRUSTED_PROXIES", "proxy.local")
+	if _, err := LoadScalingConfig(); err == nil {
+		t.Fatal("host names must be rejected (only addresses are compared)")
+	}
+}

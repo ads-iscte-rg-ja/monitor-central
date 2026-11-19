@@ -11,7 +11,7 @@ import (
 	"monitor-central/internal/utils/apikey"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Migrate initializes a database or upgrades legacy TEXT IDs atomically.
 func (db *DB) Migrate(ctx context.Context, hasher *apikey.Hasher) error {
@@ -108,10 +108,30 @@ func (db *DB) Migrate(ctx context.Context, hasher *apikey.Hasher) error {
 			return err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, databasesql.HostHealthSQL); err != nil {
-		return fmt.Errorf("migrate host health schema: %w", err)
+	if err = applyScripts(ctx, tx, version); err != nil {
+		return err
 	}
 	return tx.Commit()
+}
+
+// applyScripts runs the plain-SQL migrations newer than version, in order.
+func applyScripts(ctx context.Context, tx *sql.Tx, version int) error {
+	for _, m := range []struct {
+		version int
+		name    string
+		script  string
+	}{
+		{3, "host health", databasesql.HostHealthSQL},
+		{4, "login attempts", databasesql.LoginAttemptsSQL},
+	} {
+		if version >= m.version {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, m.script); err != nil {
+			return fmt.Errorf("migrate %s schema: %w", m.name, err)
+		}
+	}
+	return nil
 }
 
 func (db *DB) CheckSchema(ctx context.Context) error {

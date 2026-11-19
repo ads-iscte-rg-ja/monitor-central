@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"monitor-central/internal/config"
 	"monitor-central/internal/models"
@@ -15,7 +16,7 @@ import (
 
 func TestLoginReturns429AndDoesNotTrustForwardingHeaders(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
-	s := services.NewAuthService(nil, nil, logger, config.LoginConfig{PerIP: 1, PerAccount: 5, MaxConcurrent: 1})
+	s := services.NewAuthService(nil, nil, logger, config.LoginConfig{PerIP: 1, PerAccount: 5, MaxConcurrent: 1}, &countingAttempts{})
 	// Invalid input still consumes the peer's attempt without querying storage.
 	_, _ = s.Login(context.Background(), &models.LoginRequest{}, "127.0.0.1")
 	h := NewAuthHandler(s, nil, nil, logger)
@@ -28,4 +29,19 @@ func TestLoginReturns429AndDoesNotTrustForwardingHeaders(t *testing.T) {
 	if w.Code != 429 || w.Header().Get("Retry-After") != "60" {
 		t.Fatalf("status=%d retry=%s", w.Code, w.Header().Get("Retry-After"))
 	}
+}
+
+// countingAttempts counts attempts in memory (the real store is PostgreSQL).
+type countingAttempts struct{ counts map[string]int }
+
+func (c *countingAttempts) CountAttempts(_ context.Context, keys [][]byte, _ time.Duration) ([]int, error) {
+	if c.counts == nil {
+		c.counts = map[string]int{}
+	}
+	out := make([]int, len(keys))
+	for i, k := range keys {
+		c.counts[string(k)]++
+		out[i] = c.counts[string(k)]
+	}
+	return out, nil
 }

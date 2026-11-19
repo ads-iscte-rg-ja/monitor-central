@@ -8,7 +8,6 @@ import (
 	"net/mail"
 	"strings"
 	"sync"
-	"time"
 
 	"monitor-central/internal/config"
 	"monitor-central/internal/models"
@@ -44,12 +43,12 @@ var dummyPasswordHash = sync.OnceValue(func() []byte {
 })
 
 // NewAuthService creates a new AuthService
-func NewAuthService(userRepo AuthUserRepository, auditRepo AuthAuditRepository, logger *log.Logger, limits config.LoginConfig) *AuthService {
+func NewAuthService(userRepo AuthUserRepository, auditRepo AuthAuditRepository, logger *log.Logger, limits config.LoginConfig, attempts LoginAttemptStore) *AuthService {
 	return &AuthService{
 		userRepo:  userRepo,
 		auditRepo: auditRepo,
 		logger:    logger,
-		limiter:   newLoginLimiter(limits),
+		limiter:   newLoginLimiter(limits, attempts),
 		dummyHash: dummyPasswordHash(),
 	}
 }
@@ -57,7 +56,12 @@ func NewAuthService(userRepo AuthUserRepository, auditRepo AuthAuditRepository, 
 // Login authenticates a user and returns the user ID
 func (s *AuthService) Login(ctx context.Context, req *models.LoginRequest, ipAddress string) (int64, error) {
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if !s.limiter.allow(ipAddress, req.Email, time.Now()) {
+	allowed, err := s.limiter.allow(ctx, ipAddress, req.Email)
+	if err != nil {
+		// Fail closed: without the shared count the limit cannot be enforced.
+		return 0, fmt.Errorf("login rate limit: %w", err)
+	}
+	if !allowed {
 		return 0, ErrLoginRateLimited
 	}
 	select {

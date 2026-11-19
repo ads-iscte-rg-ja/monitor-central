@@ -36,6 +36,7 @@ type Metrics struct {
 	jobDuration    *prometheus.HistogramVec
 	jobFailures    *prometheus.CounterVec
 	jobLastSuccess *prometheus.GaugeVec
+	jobLeader      *prometheus.GaugeVec
 }
 
 // Options are the optional data sources read at scrape time.
@@ -92,10 +93,14 @@ func NewMetrics(logger *slog.Logger, opts Options) *Metrics {
 			Namespace: namespace, Name: "job_last_success_timestamp_seconds",
 			Help: "Unix time of each background job's last successful run.",
 		}, []string{"job"}),
+		jobLeader: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "job_leader",
+			Help: "1 if this instance leads the background job, 0 if another instance does (ADR-0007).",
+		}, []string{"job"}),
 	}
 	m.registry.MustRegister(
 		m.ingestDuration, m.ingestRecords, m.ingestBatch, m.ingestLag, m.ingestInflight,
-		m.httpDuration, m.jobDuration, m.jobFailures, m.jobLastSuccess,
+		m.httpDuration, m.jobDuration, m.jobFailures, m.jobLastSuccess, m.jobLeader,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -153,6 +158,18 @@ func (m *Metrics) ObserveJob(job string, started time.Time, err error) {
 		return
 	}
 	m.jobLastSuccess.WithLabelValues(job).SetToCurrentTime()
+}
+
+// SetLeader records whether this instance leads the job.
+func (m *Metrics) SetLeader(job string, leader bool) {
+	if m == nil {
+		return
+	}
+	value := 0.0
+	if leader {
+		value = 1
+	}
+	m.jobLeader.WithLabelValues(job).Set(value)
 }
 
 // outboxCollector reads the outbox size at scrape time, with a short timeout so

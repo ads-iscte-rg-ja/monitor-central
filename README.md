@@ -121,10 +121,11 @@ Set an alert recipient on `/profile` and configure rules on `/alerts`.
 ## Metrics and logs
 
 Central exposes Prometheus metrics on a separate, non-public listener
-(`METRICS_ADDR`, default `127.0.0.1:9464`; Compose publishes it on loopback):
+(`METRICS_ADDR`, default `127.0.0.1:9464`; Compose publishes each replica on an
+ephemeral loopback port, see `docker compose -f deployments/compose.yaml port backend 9464`):
 ingestion latency and status codes, records inserted/duplicated/rejected,
-ingestion lag, dashboard request latency, background job duration and
-failures, outbox backlog, and database pool usage. Logs are structured JSON
+ingestion lag, dashboard request latency, background job duration, failures and
+leadership, outbox backlog, and database pool usage. Logs are structured JSON
 (`LOG_FORMAT`, `LOG_LEVEL`), with the request ID for HTTP and the host ID for
 failed gRPC ingestion calls.
 
@@ -164,6 +165,13 @@ make backend/run
   `POSTGRES_MAX_OPEN_CONNS`). Over the limit, agents get `RESOURCE_EXHAUSTED`
   with a 1–10 s retry delay and resend later from their buffer, so the
   dashboard keeps database connections during a recovery storm.
+- The central can run as several instances behind the nginx load balancer in
+  Compose (`docker compose -f deployments/compose.yaml up -d --scale backend=3`,
+  ADR-0007). Each background job runs on one instance at a time (a PostgreSQL
+  advisory lock per job; another instance takes over when the leader stops),
+  login limits are shared in PostgreSQL, and `APP_ROLE=web|worker` can split
+  serving from background jobs. Behind a proxy, set `TRUSTED_PROXIES` to its
+  address so the login limiter sees the client address.
 - Central retention is disabled by default. Set the `RETENTION_*_DAYS` values to
   enable it; `CLEANUP_INTERVAL` and `CLEANUP_BATCH_SIZE` control scheduled cleanup.
 - Back up PostgreSQL and stop the backend before upgrading an existing database:

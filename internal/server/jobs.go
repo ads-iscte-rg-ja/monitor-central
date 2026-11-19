@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"monitor-central/internal/config"
@@ -208,9 +209,20 @@ func (s *Server) sendDailyAlertSummary(
 	}
 }
 
-// runJob runs one iteration of a background job and records its duration and
-// outcome (ADR-0004). An error caused by shutdown is not counted as a failure.
+// runJob runs one iteration of a background job, if this instance leads it
+// (ADR-0007), and records its duration and outcome (ADR-0004). An error caused
+// by shutdown is not counted as a failure.
 func (s *Server) runJob(ctx context.Context, name string, run func(context.Context) error) error {
+	if s.elector != nil {
+		lead, err := s.elector.Lead(ctx, name)
+		s.metrics.SetLeader(name, lead)
+		if err != nil {
+			return fmt.Errorf("leader election: %w", err)
+		}
+		if !lead {
+			return nil
+		}
+	}
 	started := time.Now()
 	err := run(ctx)
 	if ctx.Err() == nil {
