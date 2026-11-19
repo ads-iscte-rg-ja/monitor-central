@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"monitor-central/internal/models"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,6 +17,9 @@ type fakeAlertsRepository struct {
 	pending       []*models.EmailNotification
 	completed     map[int64]error
 	resolved      bool
+	resolveErr    error
+	emailsErr     error
+	createErr     error
 }
 
 func (f *fakeAlertsRepository) ListAlerts(context.Context) ([]models.AlertRuleListItem, error) {
@@ -37,6 +41,9 @@ func (f *fakeAlertsRepository) ListMetricEvaluations(context.Context) ([]models.
 	return f.evaluations, nil
 }
 func (f *fakeAlertsRepository) CreateAlertEventWithNotifications(_ context.Context, e *models.AlertEvent, n []models.EmailNotification) (bool, error) {
+	if f.createErr != nil {
+		return false, f.createErr
+	}
 	if len(f.events) > 0 {
 		return false, nil
 	}
@@ -47,9 +54,12 @@ func (f *fakeAlertsRepository) CreateAlertEventWithNotifications(_ context.Conte
 }
 func (f *fakeAlertsRepository) ResolveOpenAlertEvents(_ context.Context, targets []models.AlertTarget) error {
 	f.resolved = len(targets) > 0
-	return nil
+	return f.resolveErr
 }
 func (f *fakeAlertsRepository) ListNotificationEmails(context.Context) ([]string, error) {
+	if f.emailsErr != nil {
+		return nil, f.emailsErr
+	}
 	return []string{"first@example.com", "second@example.com"}, nil
 }
 func (f *fakeAlertsRepository) AcknowledgeAlertEvent(context.Context, int64) error     { return nil }
@@ -133,5 +143,26 @@ func TestDeliveryFailureDoesNotBlockOtherRecipients(t *testing.T) {
 	}
 	if sender.calls != 2 || repo.completed[1] == nil || repo.completed[2] != nil {
 		t.Fatal("recipients must be processed independently")
+	}
+}
+
+func TestClearedAlertsAreResolvedEvenWhenFiringAnotherFails(t *testing.T) {
+	cleared := models.AlertMetricEvaluation{AlertID: 1, HostID: 2, Metric: "cpu", Condition: "gt", Threshold: 80, CurrentValue: 20, ChannelsCSV: "email"}
+	breached := models.AlertMetricEvaluation{AlertID: 3, HostID: 2, Metric: "cpu", Condition: "gt", Threshold: 80, CurrentValue: 95, ChannelsCSV: "email"}
+
+	repo := &fakeAlertsRepository{evaluations: []models.AlertMetricEvaluation{cleared, breached}, createErr: errors.New("outbox down")}
+	err := NewAlertsService(repo).EvaluateMetricAlerts(context.Background())
+	if err == nil || !repo.resolved {
+		t.Fatalf("the failure must be reported and the cleared rule still resolved: err=%v resolved=%v", err, repo.resolved)
+	}
+
+	repo = &fakeAlertsRepository{evaluations: []models.AlertMetricEvaluation{cleared, breached}, emailsErr: errors.New("users table locked")}
+	if err := NewAlertsService(repo).EvaluateMetricAlerts(context.Background()); err == nil || !repo.resolved || len(repo.events) != 0 {
+		t.Fatalf("a recipients failure must stop firing but not resolving: err=%v resolved=%v events=%d", err, repo.resolved, len(repo.events))
+	}
+
+	repo = &fakeAlertsRepository{evaluations: []models.AlertMetricEvaluation{cleared}, resolveErr: errors.New("deadlock")}
+	if err := NewAlertsService(repo).EvaluateMetricAlerts(context.Background()); err == nil || !strings.Contains(err.Error(), "resolve alert events") {
+		t.Fatalf("a resolution failure must be returned, got %v", err)
 	}
 }
