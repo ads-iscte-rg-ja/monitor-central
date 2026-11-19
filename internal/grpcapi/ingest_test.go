@@ -254,3 +254,42 @@ func TestStorageFailureDoesNotLeakDetails(t *testing.T) {
 		t.Fatalf("want a generic INTERNAL error, got %v %q", st.Code(), st.Message())
 	}
 }
+
+func TestEveryLogLevelIsMappedAndTimestampIsOptional(t *testing.T) {
+	levels := map[ingestv1.LogLevel]string{
+		ingestv1.LogLevel_LOG_LEVEL_INFO: "INFO", ingestv1.LogLevel_LOG_LEVEL_WARN: "WARN",
+		ingestv1.LogLevel_LOG_LEVEL_ERROR: "ERROR", ingestv1.LogLevel_LOG_LEVEL_CRITICAL: "CRITICAL",
+		ingestv1.LogLevel_LOG_LEVEL_PANIC: "PANIC",
+	}
+	req := &ingestv1.IngestErrorsRequest{}
+	var id int64
+	for level := range levels {
+		id++
+		entry := errorLog(id)
+		entry.Level = level
+		entry.CreatedAt = nil // absent: the service uses the reception time
+		req.Errors = append(req.Errors, entry)
+	}
+	repo := &fakeRepo{}
+	if _, err := client(t, repo, "valid").IngestErrors(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	for i, stored := range repo.logs {
+		if want := levels[req.Errors[i].GetLevel()]; stored.Level != want || stored.CreatedAt.IsZero() {
+			t.Fatalf("record %d: level %q (want %q), created_at %v", i, stored.Level, want, stored.CreatedAt)
+		}
+	}
+}
+
+func TestHandlersRequireTheAuthenticatedHost(t *testing.T) {
+	server := &IngestServer{service: services.NewIngestionService(&fakeRepo{}), logger: log.New(io.Discard, "", 0)}
+	if _, err := server.IngestStats(context.Background(), &ingestv1.IngestStatsRequest{}); code(t, err) != codes.Unauthenticated {
+		t.Fatalf("stats without host: %v", err)
+	}
+	if _, err := server.IngestErrors(context.Background(), &ingestv1.IngestErrorsRequest{}); code(t, err) != codes.Unauthenticated {
+		t.Fatalf("errors without host: %v", err)
+	}
+	if err := server.toStatus(models.ErrInvalidAPIKey); code(t, err) != codes.Unauthenticated {
+		t.Fatalf("invalid key from the service: %v", err)
+	}
+}
