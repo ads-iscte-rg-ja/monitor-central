@@ -8,6 +8,12 @@ updates:
     groups:
       go-dependencies:
         patterns: ["*"]
+    ignore:
+      # O postgresstore é um módulo aninhado sem tags próprias (só pseudo-versões). O
+      # Dependabot tenta atualizá-lo para a v1.4.1 do módulo-pai scs, que não contém o
+      # pacote, e a atualização falha todas as semanas. Atualizar à mão com
+      # `go get github.com/alexedwards/scs/postgresstore@latest`.
+      - dependency-name: "github.com/alexedwards/scs/postgresstore"
   - package-ecosystem: github-actions
     directory: /
     schedule:
