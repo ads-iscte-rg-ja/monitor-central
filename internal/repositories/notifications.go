@@ -50,3 +50,11 @@ func (r *AlertsRepository) CompleteNotification(ctx context.Context, id int64, a
 	_, err := r.db.ExecContext(ctx, `UPDATE email_outbox SET locked_until=NULL,last_error='SMTP delivery failed',next_attempt_at=CURRENT_TIMESTAMP+($3*INTERVAL '1 second') WHERE id=$1 AND attempts=$2 AND sent_at IS NULL`, id, attempt, delay.Seconds())
 	return err
 }
+
+// CountPendingNotifications returns how many notifications are still unsent
+// (the outbox backlog, exposed as a metric).
+func (r *AlertsRepository) CountPendingNotifications(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM email_outbox WHERE sent_at IS NULL`).Scan(&n)
+	return n, err
+}

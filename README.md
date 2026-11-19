@@ -118,6 +118,25 @@ On `/hosts`, enter its name and hostname/IP, then copy its API key into
 
 Set an alert recipient on `/profile` and configure rules on `/alerts`.
 
+## Metrics and logs
+
+Central exposes Prometheus metrics on a separate, non-public listener
+(`METRICS_ADDR`, default `127.0.0.1:9464`; Compose publishes it on loopback):
+ingestion latency and status codes, records inserted/duplicated/rejected,
+ingestion lag, dashboard request latency, background job duration and
+failures, outbox backlog, and database pool usage. Logs are structured JSON
+(`LOG_FORMAT`, `LOG_LEVEL`), with the request ID for HTTP and the host ID for
+failed gRPC ingestion calls.
+
+For load tests and demos, start Prometheus and Grafana as well:
+
+```sh
+docker compose -f deployments/compose.yaml --profile observability up -d
+```
+
+Prometheus is then on `http://localhost:9090` and Grafana on
+`http://localhost:3000`, both on loopback only.
+
 ## Useful commands
 
 | Command | Purpose |

@@ -63,3 +63,18 @@ func TestGRPCPortConfiguration(t *testing.T) {
 		t.Fatalf("valid GRPC_PORT rejected: %v", err)
 	}
 }
+
+func TestObservabilityConfiguration(t *testing.T) {
+	cfg, err := LoadObservabilityConfig()
+	if err != nil || cfg.MetricsAddr != "127.0.0.1:9464" || cfg.LogFormat != "json" || cfg.LogLevel != "info" {
+		t.Fatalf("unexpected defaults %+v %v", cfg, err)
+	}
+	t.Setenv("METRICS_ADDR", "")
+	if cfg, err := LoadObservabilityConfig(); err != nil || cfg.MetricsAddr != "" {
+		t.Fatalf("an empty METRICS_ADDR must disable metrics: %+v %v", cfg, err)
+	}
+	t.Setenv("METRICS_ADDR", "9464")
+	if _, err := LoadObservabilityConfig(); err == nil {
+		t.Fatal("METRICS_ADDR without host:port accepted")
+	}
+}
