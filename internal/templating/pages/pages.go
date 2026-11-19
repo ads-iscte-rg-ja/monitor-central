@@ -132,12 +132,13 @@ func (pb *PageBox) MountStatic(r chi.Router) {
 				http.NotFound(w, req)
 				return
 			}
-			info, err := os.Lstat(file)
+			// G703: file is confined to root by the single-segment, no-dot-file and filepath.Rel checks above.
+			info, err := os.Lstat(file) //nolint:gosec // see G703 note above
 			if err != nil || !info.Mode().IsRegular() {
 				http.NotFound(w, req)
 				return
 			}
-			http.ServeFile(w, req, file)
+			http.ServeFile(w, req, file) //nolint:gosec // G703: same confinement as above, plus regular-file check
 		})))
 	}
 }

@@ -1,4 +1,6 @@
-ARG GO_IMAGE=golang:1.25-alpine
+ARG GO_IMAGE=golang:1.27.4-alpine
+# Mesma versão que a diretiva `toolchain` do go.mod: o binário de produção é compilado com o Go
+# que o CI testa e que o govulncheck analisa.
 FROM ${GO_IMAGE} AS build
 
 WORKDIR /src

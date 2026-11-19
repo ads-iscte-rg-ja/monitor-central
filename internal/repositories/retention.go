@@ -52,6 +52,7 @@ func (r *RetentionRepository) Cleanup(ctx context.Context, c config.RetentionCon
 			return nil, fmt.Errorf("invalid retention days")
 		}
 		// All identifiers/predicates above are application constants, not user input.
+		//nolint:gosec // G201: only the constant table/predicate/order above are formatted; values go as $1/$2.
 		query := fmt.Sprintf(`WITH candidates AS (SELECT id FROM %s WHERE %s ORDER BY %s LIMIT $2 FOR UPDATE SKIP LOCKED)
  DELETE FROM %s WHERE id IN (SELECT id FROM candidates)`, category.table, category.predicate, category.order, category.table)
 		result, err := tx.ExecContext(ctx, query, now.AddDate(0, 0, -category.days), c.BatchSize)
