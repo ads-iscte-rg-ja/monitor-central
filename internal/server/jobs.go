@@ -34,7 +34,7 @@ func (s *Server) checkHostHealth(ctx context.Context) {
 	ticker := time.NewTicker(config.HostHealthInterval)
 	defer ticker.Stop()
 	for {
-		if err := s.hostHealthService.Check(ctx); err != nil && ctx.Err() == nil {
+		if err := s.runJob(ctx, "host_health", s.hostHealthService.Check); err != nil && ctx.Err() == nil {
 			s.logger.Printf("host health checks: %v", err)
 		}
 		select {
@@ -49,7 +49,7 @@ func (s *Server) deliverNotifications(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := s.alertsService.DeliverNotifications(ctx); err != nil && ctx.Err() == nil {
+		if err := s.runJob(ctx, "notifications", s.alertsService.DeliverNotifications); err != nil && ctx.Err() == nil {
 			s.logger.Printf("notification delivery: %v", err)
 		}
 		select {
@@ -69,9 +69,14 @@ func (s *Server) cleanupRetainedData(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			counts, err := s.retentionRepo.Cleanup(cleanupCtx, s.retentionConfig, time.Now().UTC())
-			cancel()
+			var counts map[string]int64
+			err := s.runJob(ctx, "retention", func(ctx context.Context) error {
+				cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				var err error
+				counts, err = s.retentionRepo.Cleanup(cleanupCtx, s.retentionConfig, time.Now().UTC())
+				return err
+			})
 			if err != nil {
 				s.logger.Printf("Retention cleanup: %v", err)
 				continue
@@ -98,9 +103,7 @@ func (s *Server) evaluateMetricAlerts(
 	)
 
 	evaluate := func() {
-		if err := s.alertsService.EvaluateHostAvailability(
-			ctx,
-		); err != nil {
+		if err := s.runJob(ctx, "host_availability_alerts", s.alertsService.EvaluateHostAvailability); err != nil {
 			s.logger.Printf(
 				"Error evaluating host availability: %v",
 				err,
@@ -108,9 +111,7 @@ func (s *Server) evaluateMetricAlerts(
 			return
 		}
 
-		if err := s.alertsService.EvaluateMetricAlerts(
-			ctx,
-		); err != nil {
+		if err := s.runJob(ctx, "metric_alerts", s.alertsService.EvaluateMetricAlerts); err != nil {
 			s.logger.Printf(
 				"Error evaluating metric alerts: %v",
 				err,
@@ -192,10 +193,9 @@ func (s *Server) sendDailyAlertSummary(
 			return
 
 		case runTime := <-timer.C:
-			if err := s.alertsService.SendDailyAlertSummary(
-				ctx,
-				runTime.UTC(),
-			); err != nil {
+			if err := s.runJob(ctx, "daily_summary", func(ctx context.Context) error {
+				return s.alertsService.SendDailyAlertSummary(ctx, runTime.UTC())
+			}); err != nil {
 				s.logger.Printf(
 					"Error sending daily alert summary: %v",
 					err,
@@ -206,4 +206,15 @@ func (s *Server) sendDailyAlertSummary(
 			s.logger.Println("Daily alert summary queued")
 		}
 	}
+}
+
+// runJob runs one iteration of a background job and records its duration and
+// outcome (ADR-0004). An error caused by shutdown is not counted as a failure.
+func (s *Server) runJob(ctx context.Context, name string, run func(context.Context) error) error {
+	started := time.Now()
+	err := run(ctx)
+	if ctx.Err() == nil {
+		s.metrics.ObserveJob(name, started, err)
+	}
+	return err
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"monitor-central/internal/database"
 	"monitor-central/internal/grpcapi"
 	"monitor-central/internal/handlers"
+	"monitor-central/internal/observability"
 	"monitor-central/internal/repositories"
 	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
@@ -35,6 +37,8 @@ type Server struct {
 	sessionStore      *repositories.SessionStore
 	srv               *http.Server
 	grpcSrv           *grpc.Server
+	metricsSrv        *http.Server
+	metrics           *observability.Metrics
 	grpcAddr          string
 	logger            *log.Logger
 	retentionRepo     *repositories.RetentionRepository
@@ -44,7 +48,7 @@ type Server struct {
 	wg                sync.WaitGroup
 }
 
-func New(logger *log.Logger) (*Server, error) {
+func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConfig) (*Server, error) {
 	// Load App Configuration
 	if err := config.LoadEnv(".env"); err != nil {
 		return nil, fmt.Errorf("load environment: %w", err)
@@ -121,6 +125,12 @@ func New(logger *log.Logger) (*Server, error) {
 	hostsRepo := repositories.NewHostsRepository(db, hasher)
 	alertsRepo := repositories.NewAlertsRepository(db)
 
+	// Metrics (ADR-0004): read at scrape time from the pool and the outbox.
+	metrics := observability.NewMetrics(slogger, observability.Options{
+		DB:            db.DB,
+		OutboxPending: alertsRepo.CountPendingNotifications,
+	})
+
 	// Initialize Session Manager
 	sessionConfig := session.DefaultSessionConfig()
 	sessionConfig.CookieSecure = serverConfig.CookieSecure
@@ -174,7 +184,7 @@ func New(logger *log.Logger) (*Server, error) {
 
 	// Middleware
 	r.Use(chimiddleware.RequestID)
-	r.Use(chimiddleware.Logger)
+	r.Use(metrics.HTTPMiddleware(slogger))
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(60 * time.Second))
 	r.Group(func(r chi.Router) {
@@ -216,13 +226,17 @@ func New(logger *log.Logger) (*Server, error) {
 		IdleTimeout:  120 * time.Second,
 	}
 
+	metricsSrv := newMetricsServer(obs.MetricsAddr, metrics)
+
 	ready = true
 	return &Server{
 		db:           db,
 		sessionStore: sessionStore,
 		srv:          srv,
 		// Telemetry ingestion is served over gRPC on its own port (ADR-0003).
-		grpcSrv:           grpcapi.NewServer(ingestionService, logger),
+		grpcSrv:           grpcapi.NewServer(ingestionService, logger, metrics, slogger),
+		metrics:           metrics,
+		metricsSrv:        metricsSrv,
 		grpcAddr:          fmt.Sprintf(":%d", serverConfig.GRPCPort),
 		logger:            logger,
 		retentionRepo:     repositories.NewRetentionRepository(db),
@@ -243,6 +257,13 @@ func (s *Server) Run() error {
 		_ = ln.Close()
 		return fmt.Errorf("failed to listen on %s: %w", s.grpcAddr, err)
 	}
+	stopMetrics, err := s.startMetrics()
+	if err != nil {
+		_ = ln.Close()
+		_ = grpcLn.Close()
+		return err
+	}
+	defer stopMetrics()
 
 	// Start background jobs
 	ctxBg, cancelBg := context.WithCancel(context.Background())
@@ -303,3 +324,33 @@ func (s *Server) Run() error {
 }
 
 func (s *Server) Close() { s.sessionStore.StopCleanup(); _ = s.db.Close() }
+
+// newMetricsServer serves /metrics on its own listener (ADR-0004); an empty
+// address disables it.
+func newMetricsServer(addr string, metrics *observability.Metrics) *http.Server {
+	if addr == "" {
+		return nil
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+}
+
+// startMetrics starts the metrics listener, if configured, and returns the
+// function that stops it.
+func (s *Server) startMetrics() (func(), error) {
+	if s.metricsSrv == nil {
+		return func() {}, nil
+	}
+	ln, err := net.Listen("tcp", s.metricsSrv.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s: %w", s.metricsSrv.Addr, err)
+	}
+	go func() {
+		log.Printf("Metrics listening on %s/metrics", s.metricsSrv.Addr)
+		if err := s.metricsSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("metrics server: %v", err)
+		}
+	}()
+	return func() { _ = s.metricsSrv.Close() }, nil
+}

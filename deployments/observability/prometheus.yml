@@ -1,0 +1,9 @@
+# Prometheus do perfil Compose "observability" (ADR-0004): só para testes de carga e demonstrações.
+global:
+  scrape_interval: 5s      # resolução suficiente para os testes de carga de poucos minutos
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: monitor-central
+    static_configs:
+      - targets: ["backend:9464"]

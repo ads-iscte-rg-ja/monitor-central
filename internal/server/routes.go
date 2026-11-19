@@ -1,8 +1,8 @@
 package server
 
 import (
-	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -118,18 +118,14 @@ var protectedPaths = map[string]bool{
 	"/api/v1/dashboard": true,
 }
 
+// printRoutes lists the registered routes at debug level (LOG_LEVEL=debug), as
+// structured log lines rather than free text on stdout (ADR-0004).
 func printRoutes(r chi.Router, logger *log.Logger) {
-	fmt.Println("==================")
-	fmt.Println("Registered Routes:")
-	fmt.Println("==================")
-
-	walkFunc := func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+	walkFunc := func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		// Skip middleware-only routes
 		if route == "/*" {
 			return nil
 		}
-
-		// Check if route is protected
 		isProtected := false
 		for path := range protectedPaths {
 			if strings.HasPrefix(route, path) || route == path {
@@ -137,19 +133,11 @@ func printRoutes(r chi.Router, logger *log.Logger) {
 				break
 			}
 		}
-
-		if isProtected {
-			fmt.Printf("🔒 %s\t%s\n", method, route)
-		} else {
-			fmt.Printf("🌐 %s\t%s\n", method, route)
-		}
-
+		slog.Debug("route registered", "method", method, "route", route, "protected", isProtected)
 		return nil
 	}
 
 	if err := chi.Walk(r, walkFunc); err != nil {
 		logger.Printf("Error walking routes: %v", err)
 	}
-
-	fmt.Println("==================")
 }

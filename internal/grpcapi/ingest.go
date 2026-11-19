@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"monitor-central/internal/models"
+	"monitor-central/internal/observability"
 	"monitor-central/internal/services"
 )
 
@@ -29,18 +31,21 @@ type IngestServer struct {
 	ingestv1.UnimplementedIngestServiceServer
 	service *services.IngestionService
 	logger  *log.Logger
+	metrics *observability.Metrics
 }
 
 // NewServer builds the gRPC server for ingestion: host authentication runs in an
 // interceptor before any handler, and messages above the contract limit are
-// rejected by gRPC itself with RESOURCE_EXHAUSTED.
-func NewServer(service *services.IngestionService, logger *log.Logger) *grpc.Server {
+// rejected by gRPC itself with RESOURCE_EXHAUSTED. The metrics interceptor is
+// outermost so authentication failures are measured and logged too (ADR-0004).
+// metrics and slogger may be nil.
+func NewServer(service *services.IngestionService, logger *log.Logger, metrics *observability.Metrics, slogger *slog.Logger) *grpc.Server {
 	server := grpc.NewServer(
 		grpc.MaxRecvMsgSize(ingestv1.MaxMessageBytes),
 		grpc.InTapHandle(requireKeyHeader),
-		grpc.ChainUnaryInterceptor(authenticateHost(service, logger)),
+		grpc.ChainUnaryInterceptor(metrics.GRPCInterceptor(slogger), authenticateHost(service, logger)),
 	)
-	ingestv1.RegisterIngestServiceServer(server, &IngestServer{service: service, logger: logger})
+	ingestv1.RegisterIngestServiceServer(server, &IngestServer{service: service, logger: logger, metrics: metrics})
 	return server
 }
 
@@ -79,6 +84,7 @@ func authenticateHost(auth *services.IngestionService, logger *log.Logger) grpc.
 			}
 			return nil, status.Error(codes.Unauthenticated, "invalid or missing API key")
 		}
+		observability.SetHostID(ctx, host.ID)
 		return handler(context.WithValue(ctx, hostIDKey{}, host.ID), req)
 	}
 }
@@ -111,8 +117,19 @@ func (s *IngestServer) IngestStats(ctx context.Context, req *ingestv1.IngestStat
 	}
 	acks, err := s.service.IngestStatsBatch(ctx, host, batch)
 	if err != nil {
+		s.recordRejection("stats", err)
 		return nil, s.toStatus(err)
 	}
+	now := time.Now()
+	lags := make([]time.Duration, 0, len(batch.Stats))
+	for _, stat := range batch.Stats {
+		if !stat.CollectedAt.IsZero() {
+			lags = append(lags, now.Sub(stat.CollectedAt))
+		}
+	}
+	// The stats repository is idempotent but does not report duplicates, so
+	// every acknowledged record counts as inserted here.
+	s.metrics.RecordIngest("stats", len(acks), 0, 0, lags)
 	response := &ingestv1.IngestStatsResponse{Acknowledgements: make([]*ingestv1.StatAcknowledgement, 0, len(acks))}
 	for _, ack := range acks {
 		response.Acknowledgements = append(response.Acknowledgements, &ingestv1.StatAcknowledgement{Id: ack.ID, HostId: ack.HostID, SourceId: ack.SourceID})
@@ -144,8 +161,17 @@ func (s *IngestServer) IngestErrors(ctx context.Context, req *ingestv1.IngestErr
 	}
 	accepted, inserted, err := s.service.IngestErrors(ctx, host, batch)
 	if err != nil {
+		s.recordRejection("errors", err)
 		return nil, s.toStatus(err)
 	}
+	now := time.Now()
+	lags := make([]time.Duration, 0, len(batch.Errors))
+	for _, entry := range batch.Errors {
+		if !entry.CreatedAt.IsZero() {
+			lags = append(lags, now.Sub(entry.CreatedAt))
+		}
+	}
+	s.metrics.RecordIngest("errors", inserted, accepted-inserted, 0, lags)
 	ids := make([]int64, 0, len(batch.Errors))
 	for _, entry := range batch.Errors {
 		ids = append(ids, entry.ID)
@@ -183,5 +209,14 @@ func level(l ingestv1.LogLevel) string {
 		return "PANIC"
 	default:
 		return ""
+	}
+}
+
+// recordRejection counts a record-level rejection; batch-level and transport
+// failures are already visible in the request metric by status code.
+func (s *IngestServer) recordRejection(kind string, err error) {
+	var record *models.RecordValidationError
+	if errors.As(err, &record) {
+		s.metrics.RecordIngest(kind, 0, 0, 1, nil)
 	}
 }

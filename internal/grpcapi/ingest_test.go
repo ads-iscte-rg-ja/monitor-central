@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"monitor-central/internal/models"
+	"monitor-central/internal/observability"
 	"monitor-central/internal/services"
 )
 
@@ -69,7 +72,7 @@ func (f *fakeRepo) CreateErrorLogs(_ context.Context, _ int64, logs []*models.Er
 func client(t *testing.T, repo *fakeRepo, key string) ingestv1.IngestServiceClient {
 	t.Helper()
 	listener := bufconn.Listen(4 << 20)
-	server := NewServer(services.NewIngestionService(repo), log.New(io.Discard, "", 0))
+	server := NewServer(services.NewIngestionService(repo), log.New(io.Discard, "", 0), nil, nil)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -291,5 +294,46 @@ func TestHandlersRequireTheAuthenticatedHost(t *testing.T) {
 	}
 	if err := server.toStatus(models.ErrInvalidAPIKey); code(t, err) != codes.Unauthenticated {
 		t.Fatalf("invalid key from the service: %v", err)
+	}
+}
+
+func TestIngestionIsMeasured(t *testing.T) {
+	metrics := observability.NewMetrics(nil, observability.Options{})
+	listener := bufconn.Listen(1 << 20)
+	server := NewServer(services.NewIngestionService(&fakeRepo{duplicates: 1}), log.New(io.Discard, "", 0), metrics, nil)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return listener.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	c := &keyedClient{ingestv1.NewIngestServiceClient(conn), "valid"}
+
+	created := errorLog(1)
+	created.CreatedAt = timestamppb.New(time.Now().Add(-3 * time.Second))
+	if _, err := c.IngestErrors(context.Background(), &ingestv1.IngestErrorsRequest{Errors: []*ingestv1.ErrorLog{created, errorLog(2)}}); err != nil {
+		t.Fatal(err)
+	}
+	bad := stat(3)
+	bad.CpuPercent = 150
+	_, _ = c.IngestStats(context.Background(), &ingestv1.IngestStatsRequest{Stats: []*ingestv1.MachineStat{bad}})
+	_, _ = ingestv1.NewIngestServiceClient(conn).IngestStats(context.Background(), &ingestv1.IngestStatsRequest{}) // no key
+
+	w := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range []string{
+		`monitor_ingest_records_total{kind="errors",outcome="inserted"} 1`,
+		`monitor_ingest_records_total{kind="errors",outcome="duplicate"} 1`,
+		`monitor_ingest_records_total{kind="stats",outcome="rejected"} 1`,
+		`monitor_ingest_lag_seconds_count{kind="errors"} 1`,
+		`code="InvalidArgument",method="/monitor.ingest.v1.IngestService/IngestStats"} 1`,
+		`code="OK",method="/monitor.ingest.v1.IngestService/IngestErrors"} 1`,
+	} {
+		if !strings.Contains(w.Body.String(), line) {
+			t.Errorf("metrics output is missing %q", line)
+		}
 	}
 }
