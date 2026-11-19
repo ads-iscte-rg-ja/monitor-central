@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"math"
+	"monitor-central/internal/alertmetric"
 	"monitor-central/internal/models"
 	"strings"
 	"time"
@@ -88,40 +88,22 @@ func validateAlert(name string, hostID int64, metric, condition string, threshol
 	if hostID <= 0 {
 		return nil, models.ErrAlertHostRequired
 	}
-	switch metric {
-	case "cpu", "ram", "disk", "error_rate", "error_level", "host_offline":
-	default:
+	m, known := alertmetric.Lookup(metric)
+	if !known {
 		return nil, models.ErrInvalidAlertMetric
 	}
 	if condition != "gt" && condition != "lt" {
 		return nil, models.ErrInvalidAlertCondition
 	}
-	if !finite(threshold) || threshold <= 0 {
-		return nil, models.ErrInvalidAlertThreshold
-	}
-	if (metric == "cpu" || metric == "ram" || metric == "disk") && threshold > 100 {
-		return nil, models.ErrInvalidAlertThreshold
-	}
-	if metric == "error_level" && (threshold > 5 || math.Trunc(threshold) != threshold) {
+	if !finite(threshold) || threshold <= 0 || !m.ValidThreshold(threshold) {
 		return nil, models.ErrInvalidAlertThreshold
 	}
 	if severity != "warning" && severity != "critical" {
 		return nil, models.ErrInvalidAlertSeverity
 	}
-	clean := []string{}
-	seen := map[string]bool{}
-	for _, value := range channels {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "email" && value != "dashboard" {
-			return nil, models.ErrAlertChannelRequired
-		}
-		if !seen[value] {
-			clean = append(clean, value)
-			seen[value] = true
-		}
-	}
-	if len(clean) == 0 {
-		return nil, models.ErrAlertChannelRequired
+	clean, err := cleanChannels(channels)
+	if err != nil {
+		return nil, err
 	}
 	return &models.AlertRule{Name: name, HostID: hostID, Metric: metric, Condition: condition, Threshold: threshold, Severity: severity, Channels: clean, Enabled: enabled}, nil
 }
@@ -185,11 +167,7 @@ func (s *AlertsService) EvaluateMetricAlerts(ctx context.Context) error {
 func (s *AlertsService) fireBreachedAlerts(ctx context.Context, evaluations []models.AlertMetricEvaluation, cleared *[]models.AlertTarget) error {
 	recipients := &lazyRecipients{repo: s.repo}
 	for _, e := range evaluations {
-		breached := alertConditionMatches(e.Condition, e.CurrentValue, e.Threshold)
-		if e.Metric == "error_level" {
-			breached = e.CurrentValue >= e.Threshold
-		}
-		if !breached {
+		if !breached(e) {
 			*cleared = append(*cleared, models.AlertTarget{AlertID: e.AlertID, HostID: e.HostID})
 			continue
 		}
@@ -287,43 +265,47 @@ func hasNotificationChannel(value, target string) bool {
 	}
 	return false
 }
-func alertConditionMatches(condition string, value, threshold float64) bool {
-	if condition == "gt" {
-		return value > threshold
+
+// cleanChannels normalises the notification channels: known values only, no
+// repeats, at least one.
+func cleanChannels(channels []string) ([]string, error) {
+	clean := []string{}
+	seen := map[string]bool{}
+	for _, value := range channels {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "email" && value != "dashboard" {
+			return nil, models.ErrAlertChannelRequired
+		}
+		if !seen[value] {
+			clean = append(clean, value)
+			seen[value] = true
+		}
 	}
-	return condition == "lt" && value < threshold
-}
-func errorLevelLabel(value float64) string {
-	levels := []string{"UNKNOWN", "INFO", "WARN", "ERROR", "CRITICAL", "PANIC"}
-	i := int(value)
-	if i >= 1 && i <= 5 {
-		return levels[i]
+	if len(clean) == 0 {
+		return nil, models.ErrAlertChannelRequired
 	}
-	return levels[0]
+	return clean, nil
 }
+
+// breached asks the rule's metric (ADR-0008). A rule of a metric no longer
+// registered never fires.
+func breached(e models.AlertMetricEvaluation) bool {
+	m, ok := alertmetric.Lookup(e.Metric)
+	return ok && m.Breached(e.Condition, e.CurrentValue, e.Threshold)
+}
+
 func formatAlertValue(metric string, value float64) string {
-	switch metric {
-	case "cpu", "ram", "disk":
-		return fmt.Sprintf("%.1f%%", value)
-	case "error_rate":
-		return fmt.Sprintf("%.0f/min", value)
-	case "error_level":
-		return errorLevelLabel(value)
-	case "host_offline":
-		return fmt.Sprintf("%.1f min offline", value)
-	default:
-		return fmt.Sprintf("%g", value)
+	if m, ok := alertmetric.Lookup(metric); ok {
+		return m.Format(value)
 	}
+	return fmt.Sprintf("%g", value)
 }
+
 func formatAlertThreshold(a models.AlertRuleListItem) string {
-	if a.Metric == "error_level" {
-		return "≥ " + errorLevelLabel(a.Threshold)
+	if m, ok := alertmetric.Lookup(a.Metric); ok {
+		return m.FormatThreshold(a.Condition, a.Threshold)
 	}
-	operator := ">"
-	if a.Condition == "lt" {
-		operator = "<"
-	}
-	return operator + " " + formatAlertValue(a.Metric, a.Threshold)
+	return fmt.Sprintf("%s %g", a.Condition, a.Threshold)
 }
 
 // lazyRecipients loads the notification emails once per evaluation cycle, and

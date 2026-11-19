@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
 
+	"monitor-central/internal/alertmetric"
 	"monitor-central/internal/config"
 	"monitor-central/internal/database"
 	"monitor-central/internal/models"
@@ -225,132 +227,20 @@ func (r *AlertsRepository) UpdateAlert(
 	return tx.Commit()
 }
 
-func (r *AlertsRepository) ListMetricEvaluations(
-	ctx context.Context,
-) ([]models.AlertMetricEvaluation, error) {
+// ListMetricEvaluations returns every enabled rule with its metric's current
+// value: one set-based query per metric, each provided by the metric itself
+// (ADR-0008), ordered by rule.
+func (r *AlertsRepository) ListMetricEvaluations(ctx context.Context) ([]models.AlertMetricEvaluation, error) {
 	evaluations := []models.AlertMetricEvaluation{}
-
-	err := r.db.Select(
-		ctx,
-		&evaluations,
-		`SELECT
-			a.id AS alert_id,
-			a.name AS alert_name,
-			a.host_id,
-			h.name AS host_name,
-			a.metric,
-			a.condition,
-			a.threshold::DOUBLE PRECISION
-				AS threshold,
-			a.severity,
-			array_to_string(
-				a.notification_channels,
-				','
-			) AS channels_csv,
-			CASE a.metric
-				WHEN 'cpu' THEN
-					latest.cpu_percent
-				WHEN 'ram' THEN
-					(
-						latest.ram_used_mb /
-						NULLIF(
-							latest.ram_total_mb,
-							0
-						)
-					) * 100
-				WHEN 'disk' THEN
-					(
-						latest.disk_used_gb /
-						NULLIF(
-							latest.disk_total_gb,
-							0
-						)
-					) * 100
-				WHEN 'error_rate' THEN
-					(
-						SELECT COUNT(*)::DOUBLE PRECISION
-						FROM error_logs el
-						WHERE el.host_id = h.id
-						  AND el.level IN ('ERROR','CRITICAL','PANIC')
-						  AND el.created_at <= CURRENT_TIMESTAMP
-						  AND el.created_at >=
-							CURRENT_TIMESTAMP -
-							INTERVAL '1 minute'
-					)
-				WHEN 'error_level' THEN
-        			(
-                SELECT COALESCE(
-                        MAX(
-                                CASE el.level
-                                WHEN 'INFO' THEN 1
-                                WHEN 'WARN' THEN 2
-                                WHEN 'ERROR' THEN 3
-                                WHEN 'CRITICAL' THEN 4
-                                WHEN 'PANIC' THEN 5
-                                ELSE 0
-                                END
-                        ),
-                        0
-                )::DOUBLE PRECISION
-                FROM error_logs el
-                WHERE el.host_id = h.id
-                  AND el.created_at <= CURRENT_TIMESTAMP
-                  AND el.created_at >=
-                        CURRENT_TIMESTAMP -
-                        INTERVAL '5 minutes'
-        				)
-				WHEN 'host_offline' THEN
-					EXTRACT(
-						EPOCH FROM (
-							CURRENT_TIMESTAMP - CASE WHEN h.health_endpoint='' THEN h.last_seen_at
-							 ELSE COALESCE(h.unavailable_since,CURRENT_TIMESTAMP) END
-						)
-					) / 60.0
-				END::DOUBLE PRECISION AS current_value
-		 FROM alerts a
-		 JOIN hosts h ON h.id = a.host_id
-		 LEFT JOIN LATERAL (
-			SELECT
-				cpu_percent,
-				ram_used_mb,
-				ram_total_mb,
-				disk_used_gb,
-				disk_total_gb,
-				collected_at
-			FROM machine_stats
-			WHERE host_id = h.id
-			ORDER BY collected_at DESC
-			LIMIT 1
-		 ) AS latest ON TRUE
-		 WHERE a.enabled = TRUE
-		   AND (
-			a.metric IN (
-				'error_rate',
-				'error_level'
-			)	
-			OR (
-				a.metric = 'host_offline'
-				AND ((h.health_endpoint='' AND h.last_seen_at IS NOT NULL)
-				 OR (h.health_endpoint<>'' AND h.health_check_ok IS NOT NULL
-				 AND h.health_checked_at>=CURRENT_TIMESTAMP-($1*INTERVAL '1 second')))
-			)
-			OR (
-				a.metric IN (
-					'cpu',
-					'ram',
-					'disk'
-				)
-				AND latest.collected_at >= CURRENT_TIMESTAMP - INTERVAL '5 minutes'
-				AND latest.collected_at <= CURRENT_TIMESTAMP
-			)
-		   )
-		 ORDER BY a.id`,
-		config.HostHealthFreshness.Seconds(),
-	)
-	if err != nil {
-		return nil, err
+	for _, metric := range alertmetric.All() {
+		var rules []models.AlertMetricEvaluation
+		query, args := metric.Query()
+		if err := r.db.Select(ctx, &rules, query, args...); err != nil {
+			return nil, fmt.Errorf("evaluate %s alerts: %w", metric.Name(), err)
+		}
+		evaluations = append(evaluations, rules...)
 	}
-
+	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].AlertID < evaluations[j].AlertID })
 	return evaluations, nil
 }
 
