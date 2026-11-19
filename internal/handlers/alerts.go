@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"monitor-central/internal/alertmetric"
 	"monitor-central/internal/models"
 	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
@@ -378,5 +379,5 @@ func alertForm(hosts []models.AlertHostOption, alert models.AlertRuleListItem) m
 	if alert.HostID != nil {
 		hostID = *alert.HostID
 	}
-	return map[string]any{"ID": alert.ID, "Name": alert.Name, "Hosts": hosts, "SelectedHost": hostID, "Metrics": []string{"cpu", "ram", "disk", "error_rate", "error_level", "host_offline"}, "Metric": alert.Metric, "Condition": alert.Condition, "Threshold": alert.Threshold, "Severity": alert.Severity, "Enabled": alert.Enabled, "Email": strings.Contains(","+alert.ChannelsCSV+",", ",email,")}
+	return map[string]any{"ID": alert.ID, "Name": alert.Name, "Hosts": hosts, "SelectedHost": hostID, "Metrics": alertmetric.Names(), "MetricHelp": alertmetric.Help(), "Metric": alert.Metric, "Condition": alert.Condition, "Threshold": alert.Threshold, "Severity": alert.Severity, "Enabled": alert.Enabled, "Email": strings.Contains(","+alert.ChannelsCSV+",", ",email,")}
 }
