@@ -141,7 +141,7 @@ func New(logger *log.Logger) (*Server, error) {
 	// Initialize Handlers
 	authHandler := handlers.NewAuthHandler(authService, sessionManager, tb, logger)
 	userHandler := handlers.NewUserHandler(userService, sessionManager, tb, logger)
-	healthHandler := handlers.NewHealthHandler(db)
+	healthHandler := handlers.NewHealthHandler(services.NewHealthService(db))
 	legalHandler := handlers.NewLegalHandler(tb, sessionManager)
 	ingestionHandler := handlers.NewIngestionHandler(ingestionService)
 	dashboardHandler := handlers.NewDashboardHandler(
