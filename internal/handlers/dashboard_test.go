@@ -31,7 +31,9 @@ func (f *fakeDashboard) GetMetrics(_ context.Context, hostID int64, r string) (*
 func TestDashboardPageAndSummary(t *testing.T) {
 	svc := &fakeDashboard{summary: &models.DashboardSummary{HostsOnline: 3, HostsTotal: 3, AverageCPU: 12.5}}
 	h := NewDashboardHandler(svc, realPages(t), discard())
-	wantStatus(t, call(t, "GET", "/dashboard", "/dashboard", nil, h.GetDashboard), http.StatusOK, "<html")
+	// The placeholder must have an empty value: dashboard.js sends the selected
+	// value as host_id, and its text made every first request fail with 400.
+	wantStatus(t, call(t, "GET", "/dashboard", "/dashboard", nil, h.GetDashboard), http.StatusOK, `<option value="">Loading hosts`)
 
 	w := call(t, "GET", "/api/v1/dashboard/summary", "/api/v1/dashboard/summary", nil, h.GetSummary)
 	var got models.DashboardSummary

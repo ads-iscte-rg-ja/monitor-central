@@ -40,6 +40,7 @@ func TestLoadSettingsStopsAtTheFirstInvalidSetting(t *testing.T) {
 		{"instance role", "APP_ROLE", "leader", "APP_ROLE"},
 		{"health concurrency", "HEALTH_CONCURRENCY", "0", "HEALTH_CONCURRENCY"},
 		{"time zone", "APP_TIMEZONE", "Mars/Olympus", "APP_TIMEZONE"},
+		{"CSP mode", "CSP_MODE", "off", "CSP_MODE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			validSettingsEnv(t)

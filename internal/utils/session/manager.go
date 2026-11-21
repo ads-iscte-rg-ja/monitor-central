@@ -24,14 +24,25 @@ type SessionConfig struct {
 
 // DefaultSessionConfig returns default session configuration
 func DefaultSessionConfig() SessionConfig {
+	secure := config.GetEnvBool("COOKIE_SECURE", true)
 	return SessionConfig{
 		Lifetime:       24 * time.Hour,
 		IdleTimeout:    20 * time.Minute,
-		CookieName:     "session",
+		CookieName:     CookieName(secure),
 		CookiePath:     "/",
-		CookieSecure:   config.GetEnvBool("COOKIE_SECURE", true),
+		CookieSecure:   secure,
 		CookieSameSite: http.SameSiteStrictMode,
 	}
+}
+
+// CookieName is "__Host-session" over HTTPS (ASVS V3.3.1, ADR-0016): the
+// browser then only accepts it as Secure, for Path=/ and this host alone. Over
+// plain HTTP (development) the prefix would make the browser drop the cookie.
+func CookieName(secure bool) string {
+	if secure {
+		return "__Host-session"
+	}
+	return "session"
 }
 
 // SessionManager wraps the SCS session manager with custom session store.

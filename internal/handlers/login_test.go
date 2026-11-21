@@ -52,7 +52,11 @@ func TestLoginOutcomes(t *testing.T) {
 func TestLogoutAuditsTheUserAndEndsTheSession(t *testing.T) {
 	auth, sessions := &fakeAuth{}, &fakeSession{current: 7}
 	h := NewAuthHandler(auth, sessions, nil, discard())
-	wantRedirect(t, call(t, "POST", "/logout", "/logout", nil, h.Logout), "/")
+	w := call(t, "POST", "/logout", "/logout", nil, h.Logout)
+	wantRedirect(t, w, "/")
+	if w.Header().Get("Clear-Site-Data") != `"cache", "storage"` { // ASVS V14.3.1
+		t.Fatalf("Clear-Site-Data %q", w.Header().Get("Clear-Site-Data"))
+	}
 	if len(auth.logouts) != 1 || auth.logouts[0] != 7 || !sessions.destroyed {
 		t.Fatalf("logouts %v destroyed %v", auth.logouts, sessions.destroyed)
 	}

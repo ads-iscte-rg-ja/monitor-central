@@ -107,6 +107,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.sessionManager.Destroy(r.Context()); err != nil {
 		h.logger.Printf("Session destroy error: %v", err)
 	}
+	// Ask the browser to drop what it kept from the session (ASVS V14.3.1).
+	w.Header().Set("Clear-Site-Data", `"cache", "storage"`)
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

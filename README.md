@@ -123,6 +123,13 @@ Set an alert recipient on `/profile` and configure rules on `/alerts`. Alert and
 times, and the daily summary sent at 09:00, use `APP_TIMEZONE` (default
 `Europe/Lisbon`; ADR-0014).
 
+Every response carries a Content-Security-Policy (scripts from this origin only,
+no inline scripts, no framing), `X-Frame-Options: DENY`, `nosniff` and, with
+`COOKIE_SECURE=true`, HSTS (ADR-0016). `CSP_MODE=report-only` reports instead of
+blocking; violations are logged from `/csp-report`. Health endpoints cannot point
+at loopback, link-local or cloud metadata addresses: the probes check the
+resolved address before connecting. Private networks are allowed.
+
 ## Metrics and logs
 
 Central exposes Prometheus metrics on a separate, non-public listener

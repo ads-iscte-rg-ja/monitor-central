@@ -180,6 +180,8 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 	r.Use(metrics.HTTPMiddleware(slogger))
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(60 * time.Second))
+	// Violation reports come from the browser, without a session or CSRF headers.
+	r.Post("/csp-report", middleware.CSPReport)
 	r.Group(func(r chi.Router) {
 		r.Use(sessionManager.LoadAndSave)
 		r.Use(mdw.CSRF())
@@ -213,7 +215,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", serverConfig.Port),
-		Handler:      httpHandler(scaling.Role, r, healthHandler.Live, healthHandler.Ready),
+		Handler:      middleware.SecurityHeaders(cfg.web)(httpHandler(scaling.Role, r, healthHandler.Live, healthHandler.Ready)),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -394,6 +396,7 @@ type settings struct {
 	scaling   *config.ScalingConfig
 	health    config.HealthConfig
 	location  *time.Location
+	web       config.WebSecurityConfig
 }
 
 func loadSettings() (*settings, error) {
@@ -431,6 +434,9 @@ func loadSettings() (*settings, error) {
 		return nil, err
 	}
 	if s.location, err = config.LoadTimezone(); err != nil {
+		return nil, err
+	}
+	if s.web, err = config.LoadWebSecurityConfig(); err != nil {
 		return nil, err
 	}
 	return &s, nil

@@ -10,26 +10,24 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"monitor-central/internal/config"
 	"monitor-central/internal/models"
 )
 
+// validateHostHealth checks a host's health settings when they are saved: the
+// endpoint's syntax, its target (ADR-0016) and the contact timeout.
 func validateHostHealth(endpoint string, timeoutMinutes int) (string, int, error) {
-	endpoint = strings.TrimSpace(endpoint)
+	endpoint, err := parseHealthEndpoint(endpoint)
+	if err != nil {
+		return "", 0, err
+	}
 	if endpoint != "" {
-		u, err := url.Parse(endpoint)
-		if err != nil || len(endpoint) > 2048 || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.HasSuffix(u.Host, ":") {
+		if u, _ := url.Parse(endpoint); blockedProbeHost(u.Hostname()) { // loopback, link-local, metadata
 			return "", 0, models.ErrHealthEndpoint
 		}
-		if u.Port() != "" {
-			port, err := strconv.Atoi(u.Port())
-			if err != nil || port < 1 || port > 65535 {
-				return "", 0, models.ErrHealthEndpoint
-			}
-		}
-		endpoint = u.String()
 	}
 	if timeoutMinutes == 0 {
 		timeoutMinutes = 5
@@ -38,6 +36,32 @@ func validateHostHealth(endpoint string, timeoutMinutes int) (string, int, error
 		return "", 0, models.ErrContactTimeout
 	}
 	return endpoint, timeoutMinutes * 60, nil
+}
+
+// parseHealthEndpoint checks only the syntax: http(s), a host, no credentials,
+// query or fragment, a valid port. "" means no endpoint.
+func parseHealthEndpoint(endpoint string) (string, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", nil
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || len(endpoint) > 2048 || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.HasSuffix(u.Host, ":") {
+		return "", models.ErrHealthEndpoint
+	}
+	if !validPort(u.Port()) {
+		return "", models.ErrHealthEndpoint
+	}
+	return u.String(), nil
+}
+
+// validPort accepts no port (the scheme's default) or 1–65535.
+func validPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n >= 1 && n <= 65535
 }
 
 type HostHealthRepository interface {
@@ -51,6 +75,7 @@ const maxHealthClaim = 100
 type HostHealthService struct {
 	repo        HostHealthRepository
 	client      *http.Client
+	dialer      *net.Dialer
 	concurrency int
 	interval    time.Duration
 	now         func() time.Time
@@ -62,17 +87,25 @@ func NewHostHealthService(repo HostHealthRepository, concurrency int) *HostHealt
 	if concurrency < 1 {
 		concurrency = config.DefaultHostHealthConcurrency
 	}
-	return &HostHealthService{repo: repo, concurrency: concurrency, interval: config.HostHealthInterval, now: time.Now, client: &http.Client{
+	dialer := &net.Dialer{Timeout: config.HostHealthTimeout, Control: guardProbeDial}
+	return &HostHealthService{repo: repo, concurrency: concurrency, interval: config.HostHealthInterval, now: time.Now, dialer: dialer, client: &http.Client{
 		Timeout:       config.HostHealthTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		// No Proxy: a proxy from the environment would dial on the probes' behalf, past the guard.
 		Transport: &http.Transport{
-			DialContext:            (&net.Dialer{Timeout: config.HostHealthTimeout}).DialContext,
+			DialContext:            dialer.DialContext,
 			TLSHandshakeTimeout:    config.HostHealthTimeout,
 			ResponseHeaderTimeout:  config.HostHealthTimeout,
 			MaxResponseHeaderBytes: 32 * 1024,
 			DisableKeepAlives:      true,
 		},
 	}}
+}
+
+// SetDialControl replaces the SSRF guard of the probes (ADR-0016). Only tests
+// whose endpoints listen on loopback call it, with nil.
+func (s *HostHealthService) SetDialControl(control func(network, address string, c syscall.RawConn) error) {
+	s.dialer.Control = control
 }
 
 // Check is one iteration of the health job (ADR-0013): it probes the hosts that
@@ -151,7 +184,9 @@ func (s *HostHealthService) checkTarget(ctx context.Context, target models.HostH
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	endpoint, _, err := validateHostHealth(target.HealthEndpoint, 5)
+	// Syntax only: a target refused by the SSRF guard (for example one saved
+	// before ADR-0016) is probed, refused at the dial and recorded as unhealthy.
+	endpoint, err := parseHealthEndpoint(target.HealthEndpoint)
 	if err != nil || endpoint == "" {
 		return fmt.Errorf("invalid health endpoint for host %d", target.ID)
 	}
