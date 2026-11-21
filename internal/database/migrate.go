@@ -11,7 +11,7 @@ import (
 	"monitor-central/internal/utils/apikey"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 // Migrate initializes a database or upgrades legacy TEXT IDs atomically.
 func (db *DB) Migrate(ctx context.Context, hasher *apikey.Hasher) error {
@@ -24,6 +24,12 @@ func (db *DB) Migrate(ctx context.Context, hasher *apikey.Hasher) error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(743819112)"); err != nil {
+		return err
+	}
+	// The 30 s statement timeout of every connection (postgres.go) is for
+	// requests; a migration that rebuilds an index or fills a table over a large
+	// database runs longer (ADR-0017). The caller's context bounds it instead.
+	if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return err
 	}
 	var migrationsExist bool
@@ -126,6 +132,7 @@ func applyScripts(ctx context.Context, tx *sql.Tx, version int) error {
 		{5, "host buffer status", databasesql.HostBufferStatusSQL},
 		{6, "buffer_quarantined alert metric", databasesql.AlertBufferQuarantinedSQL},
 		{7, "host health schedule", databasesql.HostHealthScheduleSQL},
+		{8, "dashboard queries over 30 days", databasesql.Dashboard30dSQL},
 	} {
 		if version >= m.version {
 			continue

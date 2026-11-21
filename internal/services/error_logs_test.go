@@ -196,3 +196,31 @@ func TestGetErrorLogsPageInvalidLevel(t *testing.T) {
 		)
 	}
 }
+
+// Above the cap, the repository returns cap+1 (ADR-0017): the page shows the
+// cap, marks it as capped and paginates only as far as the cap covers.
+func TestGetErrorLogsPageCapsTheCount(t *testing.T) {
+	for _, tc := range []struct {
+		counted, want, pages int
+		capped               bool
+	}{
+		{models.ErrorLogCountCap + 1, models.ErrorLogCountCap, models.ErrorLogCountCap / 20, true},
+		{models.ErrorLogCountCap, models.ErrorLogCountCap, models.ErrorLogCountCap / 20, false},
+		{41, 41, 3, false},
+	} {
+		repo := &fakeErrorLogsRepository{
+			listErrorsFn: func(context.Context, models.ErrorLogFilters) ([]models.ErrorLogListItem, int, error) {
+				return nil, tc.counted, nil
+			},
+			listHostsFn:    func(context.Context) ([]models.DashboardHost, error) { return nil, nil },
+			listAppNamesFn: func(context.Context) ([]string, error) { return nil, nil },
+		}
+		page, err := NewErrorLogsService(repo, time.UTC).GetPage(context.Background(), models.ErrorLogFilters{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.TotalErrors != tc.want || page.TotalCapped != tc.capped || page.TotalPages != tc.pages {
+			t.Fatalf("counted %d: total %d capped %v pages %d", tc.counted, page.TotalErrors, page.TotalCapped, page.TotalPages)
+		}
+	}
+}

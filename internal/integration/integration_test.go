@@ -291,6 +291,10 @@ func TestLegacyNumericMigration(t *testing.T) {
 			t.Fatal("history missing", table)
 		}
 	}
+	// Migration 8 fills the hourly error counters from the existing errors (ADR-0017).
+	if count(t, db, "SELECT COALESCE(SUM(count),0) FROM error_counts_hourly") != 1 {
+		t.Fatal("error counters not filled from the existing errors")
+	}
 	if count(t, db, "SELECT COUNT(*) FROM alert_events") != 2 || count(t, db, "SELECT COUNT(*) FROM alert_events WHERE status='resolved'") != 1 {
 		t.Fatal("duplicate history not preserved")
 	}

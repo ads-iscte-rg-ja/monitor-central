@@ -122,6 +122,7 @@ func (h *ErrorLogsHandler) GetErrorLogs(
 			"Hosts":           page.Hosts,
 			"AppNames":        page.AppNames,
 			"TotalErrors":     page.TotalErrors,
+			"TotalCapped":     page.TotalCapped,
 			"Page":            page.Page,
 			"PageSize":        page.PageSize,
 			"TotalPages":      page.TotalPages,

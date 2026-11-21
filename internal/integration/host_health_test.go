@@ -130,6 +130,8 @@ func TestVersionTwoHealthUpgradePreservesTelemetryAndKeys(t *testing.T) {
 	if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts DROP COLUMN health_endpoint,DROP COLUMN contact_timeout_seconds,DROP COLUMN health_checked_at,DROP COLUMN health_check_ok,DROP COLUMN unavailable_since,DROP COLUMN next_check_at;
  DROP TABLE login_attempts;
  DROP TABLE host_buffer_status;
+ DROP TABLE error_counts_hourly;
+ DROP FUNCTION error_counts_add(), error_counts_remove() CASCADE;
  DELETE FROM schema_migrations WHERE version >= 3`); err != nil {
 		t.Fatal(err)
 	}

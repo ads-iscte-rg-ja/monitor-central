@@ -80,6 +80,10 @@ func (s *ErrorLogsService) GetPage(
 		return nil, fmt.Errorf("list error log app names: %w", err)
 	}
 
+	capped := totalErrors > models.ErrorLogCountCap
+	if capped {
+		totalErrors = models.ErrorLogCountCap
+	}
 	totalPages := 0
 	if totalErrors > 0 {
 		totalPages =
@@ -91,6 +95,7 @@ func (s *ErrorLogsService) GetPage(
 		Hosts:       hosts,
 		AppNames:    appNames,
 		TotalErrors: totalErrors,
+		TotalCapped: capped,
 		Page:        filters.Page,
 		PageSize:    filters.PageSize,
 		TotalPages:  totalPages,

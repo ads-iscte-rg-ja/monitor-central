@@ -68,6 +68,9 @@ var retentionCategories = []retentionCategory{
  DELETE FROM machine_stats WHERE id IN (SELECT id FROM candidates)`, func(c config.RetentionConfig) int { return c.StatsDays }},
 	{"error_logs", `WITH candidates AS (SELECT id FROM error_logs WHERE created_at < $1 ORDER BY created_at,id LIMIT $2 FOR UPDATE SKIP LOCKED)
  DELETE FROM error_logs WHERE id IN (SELECT id FROM candidates)`, func(c config.RetentionConfig) int { return c.ErrorDays }},
+	// The hourly error counters (ADR-0017) expire with the errors they count.
+	{"error_counts_hourly", `WITH candidates AS (SELECT bucket,host_id,level FROM error_counts_hourly WHERE bucket < $1 ORDER BY bucket LIMIT $2 FOR UPDATE SKIP LOCKED)
+ DELETE FROM error_counts_hourly c USING candidates d WHERE c.bucket=d.bucket AND c.host_id=d.host_id AND c.level=d.level`, func(c config.RetentionConfig) int { return c.ErrorDays }},
 	{"alert_events", `WITH candidates AS (SELECT id FROM alert_events WHERE status='resolved' AND resolved_at < $1
    AND NOT EXISTS (SELECT 1 FROM email_outbox n WHERE n.event_id=alert_events.id AND n.sent_at IS NULL)
    ORDER BY resolved_at,id LIMIT $2 FOR UPDATE SKIP LOCKED)
