@@ -119,7 +119,9 @@ On `/hosts`, enter its name and hostname/IP, then copy its API key into
 - Without an endpoint, set **Offline after** to allow the expected reporting gap.
   The default is five minutes; the range is one minute to 24 hours.
 
-Set an alert recipient on `/profile` and configure rules on `/alerts`.
+Set an alert recipient on `/profile` and configure rules on `/alerts`. Alert and error
+times, and the daily summary sent at 09:00, use `APP_TIMEZONE` (default
+`Europe/Lisbon`; ADR-0014).
 
 ## Metrics and logs
 

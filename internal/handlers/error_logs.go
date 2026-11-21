@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -9,18 +10,22 @@ import (
 	"strings"
 
 	"monitor-central/internal/models"
-	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
 )
 
+// errorLogsService is what the errors page needs (ADR-0014).
+type errorLogsService interface {
+	GetPage(ctx context.Context, filters models.ErrorLogFilters) (*models.ErrorLogsPage, error)
+}
+
 type ErrorLogsHandler struct {
-	service *services.ErrorLogsService
+	service errorLogsService
 	tb      *pages.PageBox
 	logger  *log.Logger
 }
 
 func NewErrorLogsHandler(
-	service *services.ErrorLogsService,
+	service errorLogsService,
 	tb *pages.PageBox,
 	logger *log.Logger,
 ) *ErrorLogsHandler {
@@ -113,7 +118,7 @@ func (h *ErrorLogsHandler) GetErrorLogs(
 		"errors",
 		map[string]interface{}{
 			"Errors":          page.Errors,
-			"Levels":          []string{"PANIC", "CRITICAL", "ERROR", "WARN", "INFO"},
+			"Levels":          models.LevelsMostSevereFirst(),
 			"Hosts":           page.Hosts,
 			"AppNames":        page.AppNames,
 			"TotalErrors":     page.TotalErrors,

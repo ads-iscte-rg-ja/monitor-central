@@ -168,9 +168,7 @@ func prepareErrorLog(hostID int64, input models.ErrorLogInput, now time.Time) (*
 		return nil, models.ErrMissingEnvironment
 	}
 	level := strings.ToUpper(strings.TrimSpace(input.Level))
-	switch level {
-	case "INFO", "WARN", "ERROR", "CRITICAL", "PANIC":
-	default:
+	if !models.ValidLevel(level) {
 		return nil, models.ErrInvalidErrorLevel
 	}
 	if strings.TrimSpace(input.Message) == "" {

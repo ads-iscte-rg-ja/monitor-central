@@ -148,39 +148,13 @@ func (s *Server) evaluateMetricAlerts(
 func (s *Server) sendDailyAlertSummary(
 	ctx context.Context,
 ) {
-	lisbonLocation, err := time.LoadLocation(
-		"Europe/Lisbon",
-	)
-	if err != nil {
-		s.logger.Printf(
-			"Failed to load Lisbon timezone: %v",
-			err,
-		)
-		return
-	}
-
 	s.logger.Println(
 		"Daily alert summary job started",
 	)
 	s.jobBeats.Register("daily_summary", 24*time.Hour)
 
 	for {
-		now := time.Now().In(lisbonLocation)
-
-		nextRun := time.Date(
-			now.Year(),
-			now.Month(),
-			now.Day(),
-			9,
-			0,
-			0,
-			0,
-			lisbonLocation,
-		)
-
-		if !nextRun.After(now) {
-			nextRun = nextRun.AddDate(0, 0, 1)
-		}
+		nextRun := nextDailySummary(time.Now(), s.location)
 
 		s.logger.Printf(
 			"Next daily alert summary scheduled for %s",
@@ -216,6 +190,23 @@ func (s *Server) sendDailyAlertSummary(
 			s.logger.Println("Daily alert summary queued")
 		}
 	}
+}
+
+// dailySummaryHour is when the daily alert summary is sent, in APP_TIMEZONE.
+const dailySummaryHour = 9
+
+// nextDailySummary is the next 09:00 in loc strictly after now (ADR-0014). It is
+// computed in the zone, so a day of 23 or 25 hours (DST) keeps 09:00 local.
+func nextDailySummary(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = config.DefaultLocation()
+	}
+	local := now.In(loc)
+	next := time.Date(local.Year(), local.Month(), local.Day(), dailySummaryHour, 0, 0, 0, loc)
+	if !next.After(local) {
+		next = time.Date(local.Year(), local.Month(), local.Day()+1, dailySummaryHour, 0, 0, 0, loc)
+	}
+	return next
 }
 
 // runJob runs one iteration of a background job, if this instance leads it

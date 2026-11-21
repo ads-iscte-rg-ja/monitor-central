@@ -96,7 +96,7 @@ func TestGetErrorLogsPageSuccess(t *testing.T) {
 		},
 	}
 
-	service := NewErrorLogsService(repo)
+	service := NewErrorLogsService(repo, nil)
 
 	page, err := service.GetPage(
 		context.Background(),
@@ -174,7 +174,7 @@ func TestGetErrorLogsPageInvalidLevel(t *testing.T) {
 		},
 	}
 
-	service := NewErrorLogsService(repo)
+	service := NewErrorLogsService(repo, nil)
 
 	_, err := service.GetPage(
 		context.Background(),

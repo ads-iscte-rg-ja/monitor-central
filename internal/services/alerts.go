@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"monitor-central/internal/alertmetric"
+	"monitor-central/internal/config"
 	"monitor-central/internal/models"
 	"strings"
 	"time"
@@ -36,15 +37,27 @@ type AlertEmailSender interface {
 type AlertsService struct {
 	repo        AlertsRepository
 	emailSender AlertEmailSender
+	// loc renders alert times and dates the daily summary (APP_TIMEZONE); now
+	// stamps fired events. Both are injectable (ADR-0014).
+	loc *time.Location
+	now func() time.Time
 }
 
+// NewAlertsService uses the default zone and the system clock until SetLocation
+// and SetClock.
 func NewAlertsService(repo AlertsRepository, senders ...AlertEmailSender) *AlertsService {
-	s := &AlertsService{repo: repo}
+	s := &AlertsService{repo: repo, loc: config.DefaultLocation(), now: time.Now}
 	if len(senders) > 0 {
 		s.emailSender = senders[0]
 	}
 	return s
 }
+
+// SetLocation sets the zone of alert times and of the daily summary's date.
+func (s *AlertsService) SetLocation(loc *time.Location) { s.loc = loc }
+
+// SetClock replaces the clock that stamps fired alert events.
+func (s *AlertsService) SetClock(now func() time.Time) { s.now = now }
 
 func (s *AlertsService) GetPage(ctx context.Context) (*models.AlertsPage, error) {
 	alerts, err := s.repo.ListAlerts(ctx)
@@ -59,12 +72,8 @@ func (s *AlertsService) GetPage(ctx context.Context) (*models.AlertsPage, error)
 	if err != nil {
 		return nil, err
 	}
-	loc, err := time.LoadLocation("Europe/Lisbon")
-	if err != nil {
-		return nil, err
-	}
 	for i := range events {
-		events[i].FiredAtDisplay = events[i].FiredAt.In(loc).Format("02 Jan 2006, 15:04")
+		events[i].FiredAtDisplay = events[i].FiredAt.In(s.loc).Format("02 Jan 2006, 15:04")
 		events[i].TriggeredValueDisplay = formatAlertValue(events[i].Metric, events[i].TriggeredValue)
 	}
 	hosts, err := s.repo.ListAlertHosts(ctx)
@@ -175,7 +184,7 @@ func (s *AlertsService) fireBreachedAlerts(ctx context.Context, evaluations []mo
 		if err != nil {
 			return err
 		}
-		event := &models.AlertEvent{AlertID: e.AlertID, HostID: e.HostID, TriggeredValue: e.CurrentValue, Status: "fired", FiredAt: time.Now().UTC()}
+		event := &models.AlertEvent{AlertID: e.AlertID, HostID: e.HostID, TriggeredValue: e.CurrentValue, Status: "fired", FiredAt: s.now().UTC()}
 		if _, err := s.repo.CreateAlertEventWithNotifications(ctx, event, notifications); err != nil {
 			return fmt.Errorf("commit alert and outbox: %w", err)
 		}
@@ -237,11 +246,7 @@ func (s *AlertsService) SendDailyAlertSummary(ctx context.Context, now time.Time
 	if len(events) == 0 {
 		body.WriteString("No alert events recorded.")
 	}
-	loc, err := time.LoadLocation("Europe/Lisbon")
-	if err != nil {
-		return err
-	}
-	date := now.In(loc).Format("2006-01-02")
+	date := now.In(s.loc).Format("2006-01-02")
 	notifications := make([]models.EmailNotification, 0, len(recipients))
 	for _, recipient := range recipients {
 		notifications = append(notifications, models.EmailNotification{Recipient: recipient, Subject: "[DAILY SUMMARY] Alerts — " + date, TextBody: body.String(), HTMLBody: "<h1>Daily alert summary</h1><pre>" + html.EscapeString(body.String()) + "</pre>", DedupeKey: "daily:" + date + ":" + recipient})

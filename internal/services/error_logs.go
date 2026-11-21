@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"monitor-central/internal/config"
 	"monitor-central/internal/models"
 )
 
@@ -25,22 +26,25 @@ type ErrorLogsRepository interface {
 
 type ErrorLogsService struct {
 	repo ErrorLogsRepository
+	loc  *time.Location // renders error times (APP_TIMEZONE, ADR-0014)
 }
 
+// NewErrorLogsService renders times in loc (the default zone if nil).
 func NewErrorLogsService(
 	repo ErrorLogsRepository,
+	loc *time.Location,
 ) *ErrorLogsService {
-	return &ErrorLogsService{repo: repo}
+	if loc == nil {
+		loc = config.DefaultLocation()
+	}
+	return &ErrorLogsService{repo: repo, loc: loc}
 }
 
 func (s *ErrorLogsService) GetPage(
 	ctx context.Context,
 	filters models.ErrorLogFilters,
 ) (*models.ErrorLogsPage, error) {
-	switch filters.Level {
-	case "", "PANIC", "CRITICAL", "ERROR", "WARN", "INFO":
-		// Empty means all levels.
-	default:
+	if filters.Level != "" && !models.ValidLevel(filters.Level) { // empty means all levels
 		return nil, models.ErrInvalidErrorLevel
 	}
 	if filters.Page <= 0 {
@@ -57,20 +61,10 @@ func (s *ErrorLogsService) GetPage(
 		return nil, fmt.Errorf("list error logs: %w", err)
 	}
 
-	lisbonLocation, err := time.LoadLocation(
-		"Europe/Lisbon",
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"load Lisbon timezone: %w",
-			err,
-		)
-	}
-
 	for i := range errorsList {
 		errorsList[i].CreatedAtDisplay =
 			errorsList[i].CreatedAt.In(
-				lisbonLocation,
+				s.loc,
 			).Format(
 				"02 Jan 2006, 15:04",
 			)

@@ -166,3 +166,32 @@ func TestClearedAlertsAreResolvedEvenWhenFiringAnotherFails(t *testing.T) {
 		t.Fatalf("a resolution failure must be returned, got %v", err)
 	}
 }
+
+// ADR-0014: the zone and the clock are injected. 23:30 UTC on 21 Nov is already
+// the 22nd in Tokyo: the summary is dated in the configured zone, the page shows
+// times in it, and fired events take the injected clock.
+func TestAlertsUseTheConfiguredZoneAndClock(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &fakeAlertsRepository{evaluations: []models.AlertMetricEvaluation{{AlertID: 1, HostID: 2, Metric: "cpu", Condition: "gt", Threshold: 80, CurrentValue: 95, ChannelsCSV: "dashboard"}}}
+	s := NewAlertsService(repo)
+	s.SetLocation(tokyo)
+	fired := time.Date(2026, 11, 21, 23, 30, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return fired })
+
+	if err := s.SendDailyAlertSummary(context.Background(), fired); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.notifications) != 2 || !strings.Contains(repo.notifications[0].Subject, "2026-11-22") || repo.notifications[0].DedupeKey != "daily:2026-11-22:first@example.com" {
+		t.Fatalf("summary not dated in Tokyo: %+v", repo.notifications)
+	}
+	page, err := s.GetPage(context.Background())
+	if err != nil || page.AlertEvents[0].FiredAtDisplay != "14 Aug 2026, 01:30" {
+		t.Fatalf("page not in Tokyo time: %+v %v", page, err)
+	}
+	if err := s.EvaluateMetricAlerts(context.Background()); err != nil || len(repo.events) != 1 || !repo.events[0].FiredAt.Equal(fired) {
+		t.Fatalf("fired event not stamped by the injected clock: %+v %v", repo.events, err)
+	}
+}

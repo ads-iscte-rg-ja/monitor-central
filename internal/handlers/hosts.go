@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -8,20 +9,28 @@ import (
 	"strings"
 
 	"monitor-central/internal/models"
-	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
 
 	"github.com/go-chi/chi/v5"
 )
 
+// hostsService is what the hosts pages need (ADR-0014).
+type hostsService interface {
+	GetPage(ctx context.Context) (*models.HostsPage, error)
+	CreateHost(ctx context.Context, request models.CreateHostRequest) (*models.Host, error)
+	UpdateHost(ctx context.Context, hostID int64, request models.UpdateHostRequest) error
+	DeleteHost(ctx context.Context, hostID int64) error
+	RegenerateAPIKey(ctx context.Context, hostID int64) (string, error)
+}
+
 type HostsHandler struct {
-	service *services.HostsService
+	service hostsService
 	tb      *pages.PageBox
 	logger  *log.Logger
 }
 
 func NewHostsHandler(
-	service *services.HostsService,
+	service hostsService,
 	tb *pages.PageBox,
 	logger *log.Logger,
 ) *HostsHandler {
