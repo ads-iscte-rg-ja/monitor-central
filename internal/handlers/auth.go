@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net"
@@ -9,19 +10,31 @@ import (
 	"monitor-central/internal/models"
 	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
-	"monitor-central/internal/utils/session"
 )
+
+// authService is what login and logout need (ADR-0014).
+type authService interface {
+	Login(ctx context.Context, req *models.LoginRequest, ipAddress string) (int64, error)
+	Logout(ctx context.Context, userID int64, ipAddress string)
+}
+
+// loginSession is the part of the session manager login and logout use.
+type loginSession interface {
+	LoginUser(ctx context.Context, userID int64) error
+	GetInt64(ctx context.Context, key string) int64
+	Destroy(ctx context.Context) error
+}
 
 // AuthHandler handles authentication HTTP requests
 type AuthHandler struct {
 	logger         *log.Logger
-	authService    *services.AuthService
-	sessionManager *session.SessionManager
+	authService    authService
+	sessionManager loginSession
 	tb             *pages.PageBox
 }
 
 // NewAuthHandler creates a new AuthHandler
-func NewAuthHandler(authService *services.AuthService, sessionManager *session.SessionManager, tb *pages.PageBox, logger *log.Logger) *AuthHandler {
+func NewAuthHandler(authService authService, sessionManager loginSession, tb *pages.PageBox, logger *log.Logger) *AuthHandler {
 	return &AuthHandler{
 		logger:         logger,
 		authService:    authService,

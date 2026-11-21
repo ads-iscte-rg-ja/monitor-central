@@ -7,10 +7,9 @@ import (
 	"monitor-central/internal/models"
 )
 
-// bufferDropKinds are the drop counter keys of the agent (ADR-0009).
-var bufferDropKinds = map[string]bool{
-	"INFO": true, "WARN": true, "ERROR": true, "CRITICAL": true, "PANIC": true, "machine_stat": true,
-}
+// validDropKind is a drop counter key of the agent (ADR-0009): a log level or
+// machine statistics.
+func validDropKind(kind string) bool { return kind == "machine_stat" || models.ValidLevel(kind) }
 
 // ValidateBufferStatus checks an agent's buffer snapshot (ADR-0010). An invalid
 // snapshot is ignored by ingestion, never a reason to reject statistics.
@@ -24,7 +23,7 @@ func ValidateBufferStatus(status *models.BufferStatus, now time.Time) error {
 		return fmt.Errorf("%w: negative count", models.ErrInvalidBufferStatus)
 	}
 	for kind, dropped := range status.DroppedByKind {
-		if !bufferDropKinds[kind] || dropped < 0 {
+		if !validDropKind(kind) || dropped < 0 {
 			return fmt.Errorf("%w: invalid drop counter", models.ErrInvalidBufferStatus)
 		}
 	}

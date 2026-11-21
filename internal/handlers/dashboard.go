@@ -1,24 +1,30 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 
 	"monitor-central/internal/models"
-	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
 )
 
+// dashboardService is what the dashboard needs (ADR-0014).
+type dashboardService interface {
+	GetSummary(ctx context.Context) (*models.DashboardSummary, error)
+	GetMetrics(ctx context.Context, hostID int64, metricsRange string) (*models.DashboardMetrics, error)
+}
+
 type DashboardHandler struct {
-	service *services.DashboardService
+	service dashboardService
 	tb      *pages.PageBox
 	logger  *log.Logger
 }
 
 func NewDashboardHandler(
-	service *services.DashboardService,
+	service dashboardService,
 	tb *pages.PageBox,
 	logger *log.Logger,
 ) *DashboardHandler {

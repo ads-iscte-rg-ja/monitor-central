@@ -3,6 +3,8 @@ package alertmetric
 import (
 	"fmt"
 	"math"
+
+	"monitor-central/internal/models"
 )
 
 const (
@@ -44,21 +46,19 @@ func (e errorRate) FormatThreshold(condition string, threshold float64) string {
 // CRITICAL or PANIC.
 type errorLevel struct{}
 
-var levels = []string{"UNKNOWN", "INFO", "WARN", "ERROR", "CRITICAL", "PANIC"}
-
 func (errorLevel) Name() string { return "error_level" }
 func (errorLevel) Help() string {
 	return "error_level: 1 INFO, 2 WARN, 3 ERROR, 4 CRITICAL, 5 PANIC (matches at or above)"
 }
 func (errorLevel) ValidThreshold(threshold float64) bool {
-	return threshold <= 5 && math.Trunc(threshold) == threshold
+	return threshold <= float64(len(models.Levels)) && math.Trunc(threshold) == threshold
 }
 func (errorLevel) Breached(_ string, value, threshold float64) bool { return value >= threshold }
 func (errorLevel) Format(value float64) string {
-	if i := int(value); i >= 1 && i <= 5 {
-		return levels[i]
+	if i := int(value); i >= 1 && i <= len(models.Levels) {
+		return models.Levels[i-1]
 	}
-	return levels[0]
+	return "UNKNOWN"
 }
 func (e errorLevel) FormatThreshold(_ string, threshold float64) string {
 	return "≥ " + e.Format(threshold)

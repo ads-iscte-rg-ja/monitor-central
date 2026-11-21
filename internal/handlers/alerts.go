@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -9,20 +10,29 @@ import (
 
 	"monitor-central/internal/alertmetric"
 	"monitor-central/internal/models"
-	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
 
 	"github.com/go-chi/chi/v5"
 )
 
+// alertsService is what the alerts pages need (ADR-0014); *services.AlertsService
+// implements it, and tests use a fake.
+type alertsService interface {
+	GetPage(ctx context.Context) (*models.AlertsPage, error)
+	CreateAlert(ctx context.Context, r models.CreateAlertRequest) (*models.AlertRule, error)
+	UpdateAlert(ctx context.Context, id int64, r models.UpdateAlertRequest) error
+	DeleteAlert(ctx context.Context, id int64) error
+	AcknowledgeAlertEvent(ctx context.Context, id int64) error
+}
+
 type AlertsHandler struct {
-	service *services.AlertsService
+	service alertsService
 	tb      *pages.PageBox
 	logger  *log.Logger
 }
 
 func NewAlertsHandler(
-	service *services.AlertsService,
+	service alertsService,
 	tb *pages.PageBox,
 	logger *log.Logger,
 ) *AlertsHandler {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,12 +10,17 @@ import (
 	"monitor-central/internal/services"
 )
 
+// readinessService is the self-test behind /health/ready (ADR-0014).
+type readinessService interface {
+	Ready(ctx context.Context) services.Readiness
+}
+
 type HealthHandler struct {
-	service *services.HealthService
+	service readinessService
 	logger  *log.Logger
 }
 
-func NewHealthHandler(service *services.HealthService, logger *log.Logger) *HealthHandler {
+func NewHealthHandler(service readinessService, logger *log.Logger) *HealthHandler {
 	return &HealthHandler{service: service, logger: logger}
 }
 

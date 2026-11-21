@@ -218,20 +218,17 @@ func timestamp(ts *timestamppb.Timestamp) time.Time {
 // level maps the contract enum to the stored level; UNSPECIFIED (or an unknown
 // future value) becomes "" and is rejected by the service as an invalid level.
 func level(l ingestv1.LogLevel) string {
-	switch l {
-	case ingestv1.LogLevel_LOG_LEVEL_INFO:
-		return "INFO"
-	case ingestv1.LogLevel_LOG_LEVEL_WARN:
-		return "WARN"
-	case ingestv1.LogLevel_LOG_LEVEL_ERROR:
-		return "ERROR"
-	case ingestv1.LogLevel_LOG_LEVEL_CRITICAL:
-		return "CRITICAL"
-	case ingestv1.LogLevel_LOG_LEVEL_PANIC:
-		return "PANIC"
-	default:
-		return ""
-	}
+	return contractLevels[l]
+}
+
+// contractLevels translates the contract to models.Levels (ADR-0015); a test
+// checks that every level, and only those, has a translation.
+var contractLevels = map[ingestv1.LogLevel]string{
+	ingestv1.LogLevel_LOG_LEVEL_INFO:     models.LevelInfo,
+	ingestv1.LogLevel_LOG_LEVEL_WARN:     models.LevelWarn,
+	ingestv1.LogLevel_LOG_LEVEL_ERROR:    models.LevelError,
+	ingestv1.LogLevel_LOG_LEVEL_CRITICAL: models.LevelCritical,
+	ingestv1.LogLevel_LOG_LEVEL_PANIC:    models.LevelPanic,
 }
 
 // recordRejection counts a record-level rejection; batch-level and transport

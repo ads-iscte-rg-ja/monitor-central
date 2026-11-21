@@ -48,6 +48,7 @@ type Server struct {
 	role              config.Role
 	elector           jobLeader
 	jobBeats          *services.JobHeartbeats
+	location          *time.Location // APP_TIMEZONE: when the daily summary runs
 	wg                sync.WaitGroup
 }
 
@@ -128,12 +129,13 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 	userService := services.NewUserService(userRepo, auditRepo, logger)
 	ingestionService := services.NewIngestionService(monitoringRepo)
 	dashboardService := services.NewDashboardService(dashboardRepo)
-	errorLogsService := services.NewErrorLogsService(errorLogsRepo)
+	errorLogsService := services.NewErrorLogsService(errorLogsRepo, cfg.location)
 	hostsService := services.NewHostsService(hostsRepo)
 	alertsService := services.NewAlertsService(
 		alertsRepo,
 		emailClient,
 	)
+	alertsService.SetLocation(cfg.location)
 	tb, tbErr := pages.NewPageBox(serverConfig.FrontendPath, logger)
 	if tbErr != nil {
 		return nil, fmt.Errorf("create pages: %w", tbErr)
@@ -237,6 +239,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 		role:              scaling.Role,
 		elector:           database.NewElector(db),
 		jobBeats:          jobBeats,
+		location:          cfg.location,
 	}, nil
 }
 
@@ -390,6 +393,7 @@ type settings struct {
 	ingest    *config.IngestConfig
 	scaling   *config.ScalingConfig
 	health    config.HealthConfig
+	location  *time.Location
 }
 
 func loadSettings() (*settings, error) {
@@ -424,6 +428,9 @@ func loadSettings() (*settings, error) {
 		return nil, err
 	}
 	if s.health, err = config.LoadHealthConfig(); err != nil {
+		return nil, err
+	}
+	if s.location, err = config.LoadTimezone(); err != nil {
 		return nil, err
 	}
 	return &s, nil

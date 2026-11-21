@@ -1,25 +1,31 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
 
 	"monitor-central/internal/config"
 	"monitor-central/internal/models"
-	"monitor-central/internal/services"
 	"monitor-central/internal/templating/pages"
 	"monitor-central/internal/utils/session"
 )
 
+// userService is what the profile page needs (ADR-0014).
+type userService interface {
+	GetProfile(ctx context.Context, userID int64) (*models.User, error)
+	UpdateNotificationEmail(ctx context.Context, userID int64, notificationEmail string) error
+}
+
 type UserHandler struct {
 	logger         *log.Logger
-	userService    *services.UserService
+	userService    userService
 	sessionManager *session.SessionManager
 	tb             *pages.PageBox
 }
 
-func NewUserHandler(userService *services.UserService, sessionManager *session.SessionManager, tb *pages.PageBox, logger *log.Logger) *UserHandler {
+func NewUserHandler(userService userService, sessionManager *session.SessionManager, tb *pages.PageBox, logger *log.Logger) *UserHandler {
 	return &UserHandler{
 		logger:         logger,
 		userService:    userService,
