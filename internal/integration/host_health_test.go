@@ -129,7 +129,8 @@ func TestVersionTwoHealthUpgradePreservesTelemetryAndKeys(t *testing.T) {
 	// Recreate the version-2 shape only inside this isolated test schema.
 	if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts DROP COLUMN health_endpoint,DROP COLUMN contact_timeout_seconds,DROP COLUMN health_checked_at,DROP COLUMN health_check_ok,DROP COLUMN unavailable_since;
  DROP TABLE login_attempts;
- DELETE FROM schema_migrations WHERE version IN (3,4)`); err != nil {
+ DROP TABLE host_buffer_status;
+ DELETE FROM schema_migrations WHERE version >= 3`); err != nil {
 		t.Fatal(err)
 	}
 	migrate(t, db)

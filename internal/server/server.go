@@ -47,6 +47,7 @@ type Server struct {
 	hostHealthService *services.HostHealthService
 	role              config.Role
 	elector           jobLeader
+	jobBeats          *services.JobHeartbeats
 	wg                sync.WaitGroup
 }
 
@@ -141,7 +142,9 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 	// Initialize Handlers
 	authHandler := handlers.NewAuthHandler(authService, sessionManager, tb, logger)
 	userHandler := handlers.NewUserHandler(userService, sessionManager, tb, logger)
-	healthHandler := handlers.NewHealthHandler(services.NewHealthService(db))
+	// Heartbeats of the jobs this instance leads, for /health/ready (ADR-0010).
+	jobBeats := services.NewJobHeartbeats(time.Now)
+	healthHandler := handlers.NewHealthHandler(services.NewHealthService(db, jobBeats), logger)
 	legalHandler := handlers.NewLegalHandler(tb, sessionManager)
 	dashboardHandler := handlers.NewDashboardHandler(
 		dashboardService,
@@ -208,7 +211,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", serverConfig.Port),
-		Handler:      httpHandler(scaling.Role, r, healthHandler.HealthCheck),
+		Handler:      httpHandler(scaling.Role, r, healthHandler.Live, healthHandler.Ready),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -233,6 +236,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 		hostHealthService: services.NewHostHealthService(hostsRepo),
 		role:              scaling.Role,
 		elector:           database.NewElector(db),
+		jobBeats:          jobBeats,
 	}, nil
 }
 
@@ -320,13 +324,16 @@ func (s *Server) Run() error {
 // Close gives up the job leads first, so another instance takes over at once.
 func (s *Server) Close() { s.elector.Close(); s.sessionStore.StopCleanup(); _ = s.db.Close() }
 
-// httpHandler is the full application, or only the health check for a worker (ADR-0007).
-func httpHandler(role config.Role, app http.Handler, health http.HandlerFunc) http.Handler {
+// httpHandler is the full application, or only the health checks for a
+// worker (ADR-0007, ADR-0010).
+func httpHandler(role config.Role, app http.Handler, live, ready http.HandlerFunc) http.Handler {
 	if role.Serves() {
 		return app
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("GET /health", ready)
+	mux.HandleFunc("GET /health/ready", ready)
+	mux.HandleFunc("GET /health/live", live)
 	return mux
 }
 

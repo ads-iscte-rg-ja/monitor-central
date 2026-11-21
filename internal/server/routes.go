@@ -96,8 +96,10 @@ func setupRoutes(
 	})
 	r.Post("/login", authHandler.Login)
 
-	// Health check
-	r.Get("/health", healthHandler.HealthCheck)
+	// Health checks (ADR-0010): /health is the same as /health/ready.
+	r.Get("/health", healthHandler.Ready)
+	r.Get("/health/ready", healthHandler.Ready)
+	r.Get("/health/live", healthHandler.Live)
 
 	// Legal
 	r.Get("/privacy-policy", legalHandler.PrivacyPolicy)

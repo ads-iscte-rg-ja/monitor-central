@@ -16,11 +16,11 @@ func metric(t *testing.T, name string) Metric {
 }
 
 func TestRegistryHoldsEveryMetricInOrder(t *testing.T) {
-	want := "cpu,disk,error_level,error_rate,host_offline,ram"
+	want := "buffer_quarantined,cpu,disk,error_level,error_rate,host_offline,ram"
 	if got := strings.Join(Names(), ","); got != want {
 		t.Fatalf("registered metrics: got %s, want %s", got, want)
 	}
-	if _, ok := Lookup("buffer_quarantined"); ok {
+	if _, ok := Lookup("swap"); ok {
 		t.Fatal("an unknown metric must not be found")
 	}
 	for _, m := range All() {
@@ -52,6 +52,7 @@ func TestThresholdLimitsPerMetric(t *testing.T) {
 		{"cpu", 100, true}, {"ram", 100.5, false}, {"disk", math.NaN(), false},
 		{"error_level", 3, true}, {"error_level", 3.5, false}, {"error_level", 6, false},
 		{"error_rate", 1000, true}, {"host_offline", 90, true},
+		{"buffer_quarantined", 1, true}, {"buffer_quarantined", 1.5, false},
 	} {
 		if got := metric(t, tc.metric).ValidThreshold(tc.threshold); got != tc.valid {
 			t.Errorf("%s threshold %v: valid=%v, want %v", tc.metric, tc.threshold, got, tc.valid)
@@ -89,5 +90,18 @@ func TestBreachAndFormatPerMetric(t *testing.T) {
 	}
 	if _, args := metric(t, "host_offline").Query(); len(args) != 1 {
 		t.Error("host_offline takes the health freshness as its only argument")
+	}
+}
+
+func TestBufferQuarantinedMatchesAtOrAboveTheThreshold(t *testing.T) {
+	m := metric(t, "buffer_quarantined")
+	if !m.Breached("gt", 1, 1) || !m.Breached("lt", 5, 1) || m.Breached("gt", 0, 1) {
+		t.Fatal("buffer_quarantined must match at or above the threshold, whatever the condition")
+	}
+	if m.Format(3) != "3 quarantined" || m.FormatThreshold("gt", 1) != "≥ 1 quarantined" {
+		t.Fatalf("format: %q / %q", m.Format(3), m.FormatThreshold("gt", 1))
+	}
+	if query, args := m.Query(); !strings.Contains(query, "host_buffer_status") || args != nil {
+		t.Fatal("buffer_quarantined must read the agents' last buffer reports")
 	}
 }

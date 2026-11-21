@@ -33,6 +33,7 @@ type fakeRepo struct {
 	logs       []*models.ErrorLog
 	duplicates int
 	calls      int
+	buffer     *models.BufferStatus
 }
 
 func (f *fakeRepo) GetHostByAPIKey(_ context.Context, key string) (*models.Host, error) {
@@ -46,8 +47,9 @@ func (f *fakeRepo) GetHostByAPIKey(_ context.Context, key string) (*models.Host,
 	return &models.Host{ID: 7}, nil
 }
 
-func (f *fakeRepo) CreateMachineStats(_ context.Context, _ int64, stats []*models.MachineStat) error {
+func (f *fakeRepo) CreateMachineStats(_ context.Context, _ int64, stats []*models.MachineStat, buffer *models.BufferStatus) error {
 	f.calls++
+	f.buffer = buffer
 	if f.saveErr != nil {
 		return f.saveErr
 	}
@@ -335,5 +337,31 @@ func TestIngestionIsMeasured(t *testing.T) {
 		if !strings.Contains(w.Body.String(), line) {
 			t.Errorf("metrics output is missing %q", line)
 		}
+	}
+}
+
+// ADR-0010: the buffer snapshot is translated and stored with the statistics;
+// an invalid one is logged and dropped, and the statistics are still accepted.
+func TestStatisticsCarryTheBufferStatus(t *testing.T) {
+	observed := time.Now().Add(-time.Second)
+	buffer := &ingestv1.BufferStatus{ObservedAt: timestamppb.New(observed), Pending: 4, Quarantined: 3,
+		OldestPendingAgeSeconds: 60, DeliveryPaused: true, SizeBytes: 1024, DroppedByKind: map[string]int64{"INFO": 9}}
+	repo := &fakeRepo{}
+	if _, err := client(t, repo, "valid").IngestStats(context.Background(), &ingestv1.IngestStatsRequest{Stats: []*ingestv1.MachineStat{stat(1)}, Buffer: buffer}); err != nil {
+		t.Fatal(err)
+	}
+	got := repo.buffer
+	if got == nil || !got.ObservedAt.Equal(observed) || got.Pending != 4 || got.Quarantined != 3 || got.OldestPendingAgeSeconds != 60 ||
+		!got.DeliveryPaused || got.SizeBytes != 1024 || got.DroppedByKind["INFO"] != 9 {
+		t.Fatalf("buffer status %+v", got)
+	}
+
+	buffer.Pending = -1
+	repo = &fakeRepo{}
+	if _, err := client(t, repo, "valid").IngestStats(context.Background(), &ingestv1.IngestStatsRequest{Stats: []*ingestv1.MachineStat{stat(1)}, Buffer: buffer}); err != nil {
+		t.Fatal("an invalid buffer status must not reject the statistics:", err)
+	}
+	if repo.buffer != nil || len(repo.stats) != 1 {
+		t.Fatalf("invalid buffer status stored (%+v) or statistics lost (%d)", repo.buffer, len(repo.stats))
 	}
 }

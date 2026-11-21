@@ -21,6 +21,12 @@ type fakeDashboardRepository struct {
 	stats               []models.MetricPoint
 	requestedHostID     int64
 	requestedRange      string
+	buffer              *models.BufferStatus
+	bufferErr           error
+}
+
+func (f *fakeDashboardRepository) GetBufferStatus(context.Context, int64) (*models.BufferStatus, error) {
+	return f.buffer, f.bufferErr
 }
 
 func (f *fakeDashboardRepository) CountHosts(

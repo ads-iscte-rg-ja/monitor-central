@@ -69,7 +69,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 45s
     healthcheck:
-      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3333/health"]
+      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3333/health/ready"]
       interval: 10s
       timeout: 5s
       start_period: 15s

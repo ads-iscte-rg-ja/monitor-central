@@ -10,6 +10,7 @@ var (
 	ErrHostNotFound          = errors.New("host not found")
 	ErrInvalidAPIKey         = errors.New("invalid API key")
 	ErrFutureTimestamp       = errors.New("timestamp cannot be in the future")
+	ErrInvalidBufferStatus   = errors.New("invalid buffer status")
 	ErrBatchTooLarge         = errors.New("error batch exceeds 100 records")
 	ErrStatsBatchTooLarge    = errors.New("statistics batch exceeds 100 records")
 	ErrEmptyStatsBatch       = errors.New("statistics batch cannot be empty")
@@ -90,6 +91,21 @@ type MachineStatsRequest struct {
 
 type MachineStatsBatchRequest struct {
 	Stats []MachineStatsRequest `json:"stats"`
+	// Buffer is the agent's optional buffer snapshot (ADR-0010).
+	Buffer *BufferStatus `json:"-"`
+}
+
+// BufferStatus is the last snapshot of a host's local buffer (ADR-0010).
+// DroppedByKind holds cumulative drops by log level or machine_stat.
+type BufferStatus struct {
+	ObservedAt              time.Time        `json:"observed_at" db:"observed_at"`
+	Pending                 int64            `json:"pending" db:"pending"`
+	Quarantined             int64            `json:"quarantined" db:"quarantined"`
+	OldestPendingAgeSeconds int64            `json:"oldest_pending_age_seconds" db:"oldest_pending_age_seconds"`
+	DeliveryPaused          bool             `json:"delivery_paused" db:"delivery_paused"`
+	SizeBytes               int64            `json:"size_bytes" db:"size_bytes"`
+	DroppedByKind           map[string]int64 `json:"dropped_by_kind"`
+	ReceivedAt              time.Time        `json:"received_at" db:"received_at"`
 }
 
 // StatAcknowledgement is deliberately small so a complete batch acknowledgement
@@ -177,6 +193,8 @@ type DashboardMetrics struct {
 	SelectedHost *DashboardHost  `json:"selected_host,omitempty"`
 	Range        string          `json:"range"`
 	Stats        []MetricPoint   `json:"stats"`
+	// Buffer is the selected host's last buffer snapshot, if it reported one.
+	Buffer *BufferStatus `json:"buffer,omitempty"`
 }
 
 // ErrorLogFilters contains the filters available on the error logs page.

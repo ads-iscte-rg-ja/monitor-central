@@ -32,6 +32,7 @@ func (s *Server) startBackgroundJobs(ctx context.Context) {
 }
 
 func (s *Server) checkHostHealth(ctx context.Context) {
+	s.jobBeats.Register("host_health", config.HostHealthInterval)
 	ticker := time.NewTicker(config.HostHealthInterval)
 	defer ticker.Stop()
 	for {
@@ -47,7 +48,9 @@ func (s *Server) checkHostHealth(ctx context.Context) {
 }
 
 func (s *Server) deliverNotifications(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	const interval = 5 * time.Second
+	s.jobBeats.Register("notifications", interval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		if err := s.runJob(ctx, "notifications", s.alertsService.DeliverNotifications); err != nil && ctx.Err() == nil {
@@ -62,6 +65,7 @@ func (s *Server) deliverNotifications(ctx context.Context) {
 }
 
 func (s *Server) cleanupRetainedData(ctx context.Context) {
+	s.jobBeats.Register("retention", s.retentionConfig.Interval)
 	ticker := time.NewTicker(s.retentionConfig.Interval)
 	defer ticker.Stop()
 
@@ -95,6 +99,8 @@ func (s *Server) evaluateMetricAlerts(
 	ctx context.Context,
 ) {
 	const evaluationInterval = 15 * time.Second
+	s.jobBeats.Register("host_availability_alerts", evaluationInterval)
+	s.jobBeats.Register("metric_alerts", evaluationInterval)
 
 	ticker := time.NewTicker(evaluationInterval)
 	defer ticker.Stop()
@@ -154,6 +160,7 @@ func (s *Server) sendDailyAlertSummary(
 	s.logger.Println(
 		"Daily alert summary job started",
 	)
+	s.jobBeats.Register("daily_summary", 24*time.Hour)
 
 	for {
 		now := time.Now().In(lisbonLocation)
@@ -210,19 +217,23 @@ func (s *Server) sendDailyAlertSummary(
 }
 
 // runJob runs one iteration of a background job, if this instance leads it
-// (ADR-0007), and records its duration and outcome (ADR-0004). An error caused
-// by shutdown is not counted as a failure.
+// (ADR-0007), records its duration and outcome (ADR-0004) and its heartbeat
+// (ADR-0010). An error caused by shutdown is not counted as a failure.
 func (s *Server) runJob(ctx context.Context, name string, run func(context.Context) error) error {
 	if s.elector != nil {
 		lead, err := s.elector.Lead(ctx, name)
 		s.metrics.SetLeader(name, lead)
+		s.jobBeats.Starting(name, lead && err == nil)
 		if err != nil {
 			return fmt.Errorf("leader election: %w", err)
 		}
 		if !lead {
 			return nil
 		}
+	} else {
+		s.jobBeats.Starting(name, true)
 	}
+	defer s.jobBeats.Finished(name)
 	started := time.Now()
 	err := run(ctx)
 	if ctx.Err() == nil {
