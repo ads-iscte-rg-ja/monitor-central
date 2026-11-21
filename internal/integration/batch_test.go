@@ -108,11 +108,11 @@ func TestStatisticsAcknowledgementsKeepTheBatchOrder(t *testing.T) {
 		return &models.MachineStat{SourceID: &source, HostID: h.ID, CPUPercent: 25, RAMUsedMB: 1, RAMTotalMB: 2, DiskUsedGB: 1, DiskTotalGB: 2, CollectedAt: time.Now().UTC().Add(-time.Minute)}
 	}
 	original := []*models.MachineStat{stat(7), stat(8)}
-	if err := repo.CreateMachineStats(ctx, h.ID, original); err != nil {
+	if err := repo.CreateMachineStats(ctx, h.ID, original, nil); err != nil {
 		t.Fatal(err)
 	}
 	resent := []*models.MachineStat{stat(9), stat(8), stat(7)}
-	if err := repo.CreateMachineStats(ctx, h.ID, resent); err != nil {
+	if err := repo.CreateMachineStats(ctx, h.ID, resent, nil); err != nil {
 		t.Fatal(err)
 	}
 	if resent[1].ID != original[1].ID || resent[2].ID != original[0].ID || resent[0].ID <= 0 || resent[0].ID == original[0].ID {

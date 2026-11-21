@@ -116,6 +116,14 @@ func (s *IngestServer) IngestStats(ctx context.Context, req *ingestv1.IngestStat
 			CollectedAt: timestamp(stat.GetCollectedAt()),
 		})
 	}
+	if buffer := req.GetBuffer(); buffer != nil {
+		batch.Buffer = bufferStatus(buffer)
+		if err := services.ValidateBufferStatus(batch.Buffer, time.Now()); err != nil {
+			// Accessory data: log it and still accept the statistics (ADR-0010).
+			s.logger.Printf("grpc ingestion: host %d sent a buffer status that was ignored: %v", host, err)
+			batch.Buffer = nil
+		}
+	}
 	acks, err := s.service.IngestStatsBatch(ctx, host, batch)
 	if err != nil {
 		s.recordRejection("stats", err)
@@ -183,6 +191,19 @@ func (s *IngestServer) IngestErrors(ctx context.Context, req *ingestv1.IngestErr
 		Duplicates: int32(accepted - inserted), //nolint:gosec // G115: at most MaxBatchRecords (100)
 		SourceIds:  ids,
 	}, nil
+}
+
+// bufferStatus translates the contract's buffer snapshot (monitor-api v1.1.0).
+func bufferStatus(b *ingestv1.BufferStatus) *models.BufferStatus {
+	return &models.BufferStatus{
+		ObservedAt:              timestamp(b.GetObservedAt()),
+		Pending:                 b.GetPending(),
+		Quarantined:             b.GetQuarantined(),
+		OldestPendingAgeSeconds: b.GetOldestPendingAgeSeconds(),
+		DeliveryPaused:          b.GetDeliveryPaused(),
+		SizeBytes:               b.GetSizeBytes(),
+		DroppedByKind:           b.GetDroppedByKind(),
+	}
 }
 
 // timestamp returns the zero time for an absent timestamp, which the service

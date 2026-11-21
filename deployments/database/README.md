@@ -7,6 +7,9 @@ database/
   migrations/
     002_security_retention.sql          Version-1 to version-2 structural changes
     003_host_health.sql                 Version-2 to version-3 host health settings
+    004_login_attempts.sql              Version 4: login limiter shared by instances (ADR-0007)
+    005_host_buffer_status.sql          Version 5: last buffer report per host (ADR-0010)
+    006_alert_buffer_quarantined.sql    Version 6: buffer_quarantined alert metric (ADR-0010)
     legacy_text_to_numeric.sql         Special pre-versioned TEXT-ID conversion
 ```
 
@@ -36,17 +39,17 @@ Back up the database and stop the application before an upgrade. For Compose use
 For local Go processes use `make db/migrate`, then start the upgraded app.
 Restarting PostgreSQL or editing `init.sql` does not upgrade an existing volume.
 
-The current schema version is 3. Existing version-2 databases need
-`003_host_health.sql` through the migration command before starting the updated
-backend. Keep the existing database configuration, persistent volume, and
+The current schema version is 6. Older databases are upgraded through every
+missing migration, in order, by the migration command before starting the
+updated backend. Keep the existing database configuration, persistent volume, and
 `HOST_API_KEY_SECRET`. The upgrade adds default contact-based health settings
 and preserves host credentials, telemetry, and deduplication receipts. The
-version-3 migration has not been executed for the latest source changes.
+integration tests run the upgrade from version 2 to the current version.
 
 ## Migration ownership
 
 - Keep `init.sql` as the baseline. Add subsequent changes as numbered migrations
-  (the next version is `004_...sql`) rather than rewriting deployed history.
+  (the next version is `007_...sql`) rather than rewriting deployed history.
 - `internal/database/migrate.go` explicitly orders the migration steps, checks
   schema versions, and executes them under a transaction and advisory lock.
   Add each new migration to the embedded scripts and the runner when introduced.
@@ -58,6 +61,10 @@ version-3 migration has not been executed for the latest source changes.
 - Version 3 adds optional central-probed health URLs, per-host contact timeouts,
   and the latest check/failure state. A version-2 upgrade verifies the existing
   HMAC secret and does not rerun credential conversion.
+- Version 4 adds the login limiter windows; version 5 the last buffer report of
+  each host; version 6 allows the `buffer_quarantined` alert metric. A new alert
+  metric is a file in `internal/alertmetric` plus a migration like version 6; an
+  integration test compares the registry with the `CHECK` constraint.
 - `embed.go` keeps the exact deployment files inside compiled migration tools;
   no runtime SQL directory or duplicate schema copy is needed.
 - PostgreSQL initialization runs only `init.sql`. The migrations directory is

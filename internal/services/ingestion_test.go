@@ -16,12 +16,14 @@ type fakeIngestionRepository struct {
 	stats  []*models.MachineStat
 	logs   []*models.ErrorLog
 	hostID int64
+	buffer *models.BufferStatus
 }
 
 func (f *fakeIngestionRepository) GetHostByAPIKey(context.Context, string) (*models.Host, error) {
 	return f.host, f.err
 }
-func (f *fakeIngestionRepository) CreateMachineStats(_ context.Context, hostID int64, stats []*models.MachineStat) error {
+func (f *fakeIngestionRepository) CreateMachineStats(_ context.Context, hostID int64, stats []*models.MachineStat, buffer *models.BufferStatus) error {
+	f.buffer = buffer
 	for i, s := range stats {
 		s.ID = int64(12 + i)
 		f.stat = s

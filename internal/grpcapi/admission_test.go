@@ -36,7 +36,7 @@ func (b *blockingRepo) GetHostByAPIKey(context.Context, string) (*models.Host, e
 	b.auths.Add(1)
 	return &models.Host{ID: 7}, nil
 }
-func (b *blockingRepo) CreateMachineStats(context.Context, int64, []*models.MachineStat) error {
+func (b *blockingRepo) CreateMachineStats(context.Context, int64, []*models.MachineStat, *models.BufferStatus) error {
 	b.writing <- struct{}{}
 	<-b.release
 	return nil

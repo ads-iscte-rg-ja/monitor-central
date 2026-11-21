@@ -34,6 +34,7 @@ type DashboardRepository interface {
 		metricsRange string,
 	) ([]models.MetricPoint, error)
 	GetLatestMetric(context.Context, int64) (*models.MetricPoint, error)
+	GetBufferStatus(context.Context, int64) (*models.BufferStatus, error)
 }
 
 type DashboardService struct {
@@ -135,11 +136,16 @@ func (s *DashboardService) GetMetrics(
 	if err != nil {
 		return nil, err
 	}
+	buffer, err := s.repo.GetBufferStatus(ctx, selectedHost.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get buffer status: %w", err)
+	}
 	return &models.DashboardMetrics{
 		Latest:       latest,
 		Hosts:        hosts,
 		SelectedHost: selectedHost,
 		Range:        metricsRange,
 		Stats:        stats,
+		Buffer:       buffer,
 	}, nil
 }

@@ -40,8 +40,13 @@ func TestEveryAlertMetricIsEvaluatedFromTheDatabase(t *testing.T) {
  ($1,'app','test','ERROR','old',CURRENT_TIMESTAMP-INTERVAL '2 minutes'),
  ($1,'app','test','PANIC','older',CURRENT_TIMESTAMP-INTERVAL '6 minutes')`, fresh.ID)
 	exec(`UPDATE hosts SET last_seen_at=CURRENT_TIMESTAMP-INTERVAL '10 minutes' WHERE id=$1`, fresh.ID)
+	// Buffer reports (ADR-0010): only the one received in the last 5 minutes counts.
+	exec(`INSERT INTO host_buffer_status(host_id,observed_at,pending,quarantined,oldest_pending_age_seconds,delivery_paused,size_bytes,received_at) VALUES
+ ($1,CURRENT_TIMESTAMP,0,3,0,FALSE,4096,CURRENT_TIMESTAMP-INTERVAL '1 minute'),
+ ($2,CURRENT_TIMESTAMP,0,8,0,FALSE,4096,CURRENT_TIMESTAMP-INTERVAL '10 minutes')`, fresh.ID, stale.ID)
+	exec(`INSERT INTO alerts(name,host_id,metric,condition,threshold) VALUES('stale quarantine',$1,'buffer_quarantined','gt',1)`, stale.ID)
 	rules := map[string]int64{}
-	for _, metric := range []string{"cpu", "ram", "disk", "error_rate", "error_level", "host_offline"} {
+	for _, metric := range []string{"cpu", "ram", "disk", "error_rate", "error_level", "host_offline", "buffer_quarantined"} {
 		var id int64
 		if err := db.QueryRowContext(ctx, `INSERT INTO alerts(name,host_id,metric,condition,threshold) VALUES($1,$2,$1,'gt',1) RETURNING id`, metric, fresh.ID).Scan(&id); err != nil {
 			t.Fatal(err)
@@ -60,8 +65,8 @@ func TestEveryAlertMetricIsEvaluatedFromTheDatabase(t *testing.T) {
 	}
 	got := map[int64]float64{}
 	for _, e := range evaluations {
-		if e.HostID == stale.ID && e.Metric == "cpu" {
-			t.Fatal("statistics older than 5 minutes must not be evaluated")
+		if e.HostID == stale.ID && (e.Metric == "cpu" || e.Metric == "buffer_quarantined") {
+			t.Fatal("statistics and buffer reports older than 5 minutes must not be evaluated")
 		}
 		if e.HostID == fresh.ID {
 			got[e.AlertID] = e.CurrentValue
@@ -69,9 +74,10 @@ func TestEveryAlertMetricIsEvaluatedFromTheDatabase(t *testing.T) {
 	}
 	want := map[string]float64{
 		"cpu": 42, "ram": 25, "disk": 40, // latest statistics only
-		"error_rate":   3,  // ERROR, CRITICAL and PANIC in the last minute
-		"error_level":  4,  // highest level in the last 5 minutes (CRITICAL)
-		"host_offline": 10, // minutes since the last contact
+		"error_rate":         3,  // ERROR, CRITICAL and PANIC in the last minute
+		"error_level":        4,  // highest level in the last 5 minutes (CRITICAL)
+		"host_offline":       10, // minutes since the last contact
+		"buffer_quarantined": 3,  // the agent's last buffer report
 	}
 	for metric, value := range want {
 		v, ok := got[rules[metric]]

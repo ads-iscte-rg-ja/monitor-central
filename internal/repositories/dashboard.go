@@ -3,6 +3,8 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 
 	"monitor-central/internal/database"
 	"monitor-central/internal/models"
@@ -22,6 +24,27 @@ func (r *DashboardRepository) GetLatestMetric(ctx context.Context, hostID int64)
 		return nil, err
 	}
 	return &p, nil
+}
+
+// GetBufferStatus returns the host's last buffer snapshot (ADR-0010), or nil
+// if its agent never reported one.
+func (r *DashboardRepository) GetBufferStatus(ctx context.Context, hostID int64) (*models.BufferStatus, error) {
+	var status models.BufferStatus
+	var dropped []byte
+	err := r.db.QueryRowContext(ctx, `SELECT observed_at,pending,quarantined,oldest_pending_age_seconds,
+ delivery_paused,size_bytes,dropped_by_kind,received_at FROM host_buffer_status WHERE host_id=$1`, hostID).Scan(
+		&status.ObservedAt, &status.Pending, &status.Quarantined, &status.OldestPendingAgeSeconds,
+		&status.DeliveryPaused, &status.SizeBytes, &dropped, &status.ReceivedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(dropped, &status.DroppedByKind); err != nil {
+		return nil, fmt.Errorf("decode buffer drops: %w", err)
+	}
+	return &status, nil
 }
 
 func NewDashboardRepository(

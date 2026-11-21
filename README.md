@@ -172,6 +172,18 @@ make backend/run
   login limits are shared in PostgreSQL, and `APP_ROLE=web|worker` can split
   serving from background jobs. Behind a proxy, set `TRUSTED_PROXIES` to its
   address so the login limiter sees the client address.
+- Health endpoints (ADR-0010): `/health/live` answers while the process serves
+  HTTP; `/health/ready` (and `/health`) answers 503 when PostgreSQL is
+  unreachable or when a background job this instance leads has not completed an
+  iteration for more than twice its interval, listing the stale jobs. The
+  Compose health check uses `/health/ready`. The open-source nginx only has
+  passive checks, so it does not consult readiness; an orchestrator can.
+- Agents report their buffer state with the statistics (`monitor-api` v1.1.0):
+  pending and quarantined records, oldest pending age, paused delivery, size
+  and records dropped by the buffer limit. Central keeps the latest report per
+  host, shows it as `buffer` in `/api/v1/dashboard/metrics`, and the
+  `buffer_quarantined` alert metric fires on quarantined records (threshold 1 =
+  any). An invalid report is logged and ignored; the statistics are accepted.
 - Central retention is disabled by default. Set the `RETENTION_*_DAYS` values to
   enable it; `CLEANUP_INTERVAL` and `CLEANUP_BATCH_SIZE` control scheduled cleanup.
 - Back up PostgreSQL and stop the backend before upgrading an existing database:
@@ -183,7 +195,7 @@ make backend/run
   ```
 
 See [database setup and migrations](deployments/database/README.md) for details.
-The current schema version is **3**. Keep central and remote on compatible
+The current schema version is **6**. Keep central and remote on compatible
 versions of the `monitor-api` contract, and preserve each host's SQLite buffer
 across restarts.
 

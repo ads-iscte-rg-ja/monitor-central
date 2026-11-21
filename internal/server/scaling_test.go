@@ -52,18 +52,20 @@ func TestJobsRunOnlyWhereTheInstanceLeads(t *testing.T) {
 
 func TestWorkerAnswersOnlyTheHealthCheck(t *testing.T) {
 	app := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
-	health := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+	live := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+	ready := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) }
 	status := func(h http.Handler, path string) int {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		return w.Code
 	}
-	if h := httpHandler(config.RoleWeb, app, health); status(h, "/dashboard") != http.StatusTeapot {
+	if h := httpHandler(config.RoleWeb, app, live, ready); status(h, "/dashboard") != http.StatusTeapot {
 		t.Fatal("web must serve the application")
 	}
-	worker := httpHandler(config.RoleWorker, app, health)
-	if status(worker, "/health") != http.StatusOK || status(worker, "/dashboard") != http.StatusNotFound {
-		t.Fatal("a worker must answer the health check and nothing else")
+	worker := httpHandler(config.RoleWorker, app, live, ready)
+	if status(worker, "/health") != http.StatusAccepted || status(worker, "/health/ready") != http.StatusAccepted ||
+		status(worker, "/health/live") != http.StatusOK || status(worker, "/dashboard") != http.StatusNotFound {
+		t.Fatal("a worker must answer the health checks and nothing else")
 	}
 }
 

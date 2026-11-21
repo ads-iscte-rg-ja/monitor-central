@@ -16,5 +16,11 @@ var HostHealthSQL string
 //go:embed migrations/004_login_attempts.sql
 var LoginAttemptsSQL string
 
+//go:embed migrations/005_host_buffer_status.sql
+var HostBufferStatusSQL string
+
+//go:embed migrations/006_alert_buffer_quarantined.sql
+var AlertBufferQuarantinedSQL string
+
 //go:embed migrations/legacy_text_to_numeric.sql
 var LegacyTextToNumericSQL string

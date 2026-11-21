@@ -18,7 +18,8 @@ const (
 
 type IngestionRepository interface {
 	GetHostByAPIKey(context.Context, string) (*models.Host, error)
-	CreateMachineStats(context.Context, int64, []*models.MachineStat) error
+	// CreateMachineStats also stores the buffer snapshot, if any, in the same transaction.
+	CreateMachineStats(context.Context, int64, []*models.MachineStat, *models.BufferStatus) error
 	CreateErrorLogs(context.Context, int64, []*models.ErrorLog) (int, error)
 }
 type IngestionService struct{ repo IngestionRepository }
@@ -44,7 +45,7 @@ func (s *IngestionService) IngestStats(ctx context.Context, hostID int64, reques
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.CreateMachineStats(ctx, hostID, []*models.MachineStat{stat}); err != nil {
+	if err := s.repo.CreateMachineStats(ctx, hostID, []*models.MachineStat{stat}, nil); err != nil {
 		return nil, fmt.Errorf("save statistics: %w", err)
 	}
 	return stat, nil
@@ -78,7 +79,12 @@ func (s *IngestionService) IngestStatsBatch(ctx context.Context, hostID int64, r
 		}
 		stats = append(stats, stat)
 	}
-	if err := s.repo.CreateMachineStats(ctx, hostID, stats); err != nil {
+	// The snapshot is accessory: an invalid one is dropped, the statistics are not.
+	buffer := request.Buffer
+	if buffer != nil && ValidateBufferStatus(buffer, now) != nil {
+		buffer = nil
+	}
+	if err := s.repo.CreateMachineStats(ctx, hostID, stats, buffer); err != nil {
 		return nil, fmt.Errorf("save statistics batch: %w", err)
 	}
 	ack := make([]models.StatAcknowledgement, 0, len(stats))

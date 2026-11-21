@@ -14,7 +14,7 @@ require (
 )
 
 require (
-	github.com/ads-iscte-rg-ja/monitor-api v1.0.0
+	github.com/ads-iscte-rg-ja/monitor-api v1.1.0
 	github.com/prometheus/client_golang v1.25.0
 	golang.org/x/text v0.44.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1

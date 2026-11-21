@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -35,8 +36,9 @@ func (r *MonitoringRepository) GetHostByAPIKey(ctx context.Context, key string) 
 }
 
 // CreateMachineStats stores a batch in one transaction with a fixed number of
-// statements, whatever the batch size (ADR-0005): receipts, rows, host update.
-func (r *MonitoringRepository) CreateMachineStats(ctx context.Context, hostID int64, stats []*models.MachineStat) error {
+// statements, whatever the batch size (ADR-0005): receipts, rows, host update
+// and, if the agent sent one, its buffer snapshot (ADR-0010).
+func (r *MonitoringRepository) CreateMachineStats(ctx context.Context, hostID int64, stats []*models.MachineStat, buffer *models.BufferStatus) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -82,7 +84,40 @@ func (r *MonitoringRepository) CreateMachineStats(ctx context.Context, hostID in
 	if err := touchHost(ctx, tx, hostID); err != nil {
 		return err
 	}
+	if err := saveBufferStatus(ctx, tx, hostID, buffer); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// saveBufferStatus keeps only the newest snapshot of each host: a re-sent or
+// out-of-order batch, possibly on another instance, never replaces a newer one.
+func saveBufferStatus(ctx context.Context, tx *sql.Tx, hostID int64, buffer *models.BufferStatus) error {
+	if buffer == nil {
+		return nil
+	}
+	dropped := buffer.DroppedByKind
+	if dropped == nil {
+		dropped = map[string]int64{}
+	}
+	droppedJSON, err := json.Marshal(dropped)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO host_buffer_status(host_id,observed_at,pending,quarantined,
+ oldest_pending_age_seconds,delivery_paused,size_bytes,dropped_by_kind)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+ ON CONFLICT(host_id) DO UPDATE SET observed_at=EXCLUDED.observed_at,pending=EXCLUDED.pending,
+ quarantined=EXCLUDED.quarantined,oldest_pending_age_seconds=EXCLUDED.oldest_pending_age_seconds,
+ delivery_paused=EXCLUDED.delivery_paused,size_bytes=EXCLUDED.size_bytes,
+ dropped_by_kind=EXCLUDED.dropped_by_kind,received_at=CURRENT_TIMESTAMP
+ WHERE host_buffer_status.observed_at < EXCLUDED.observed_at`,
+		hostID, buffer.ObservedAt.UTC(), buffer.Pending, buffer.Quarantined, buffer.OldestPendingAgeSeconds,
+		buffer.DeliveryPaused, buffer.SizeBytes, string(droppedJSON))
+	if err != nil {
+		return fmt.Errorf("save buffer status: %w", err)
+	}
+	return nil
 }
 
 // CreateErrorLogs stores a batch like CreateMachineStats and returns how many
