@@ -11,7 +11,7 @@ import (
 	"monitor-central/internal/utils/apikey"
 )
 
-const SchemaVersion = 6
+const SchemaVersion = 7
 
 // Migrate initializes a database or upgrades legacy TEXT IDs atomically.
 func (db *DB) Migrate(ctx context.Context, hasher *apikey.Hasher) error {
@@ -125,6 +125,7 @@ func applyScripts(ctx context.Context, tx *sql.Tx, version int) error {
 		{4, "login attempts", databasesql.LoginAttemptsSQL},
 		{5, "host buffer status", databasesql.HostBufferStatusSQL},
 		{6, "buffer_quarantined alert metric", databasesql.AlertBufferQuarantinedSQL},
+		{7, "host health schedule", databasesql.HostHealthScheduleSQL},
 	} {
 		if version >= m.version {
 			continue

@@ -41,17 +41,28 @@ func validateHostHealth(endpoint string, timeoutMinutes int) (string, int, error
 }
 
 type HostHealthRepository interface {
-	ListHealthTargets(context.Context, int64, int) ([]models.HostHealthTarget, error)
+	ClaimDueHealthTargets(ctx context.Context, now time.Time, interval time.Duration, limit int) ([]models.HostHealthTarget, error)
 	RecordHealthCheck(context.Context, models.HostHealthTarget, time.Time, bool) error
 }
 
+// maxHealthClaim bounds one claim statement; free slots are usually fewer.
+const maxHealthClaim = 100
+
 type HostHealthService struct {
-	repo   HostHealthRepository
-	client *http.Client
+	repo        HostHealthRepository
+	client      *http.Client
+	concurrency int
+	interval    time.Duration
+	now         func() time.Time
 }
 
-func NewHostHealthService(repo HostHealthRepository) *HostHealthService {
-	return &HostHealthService{repo: repo, client: &http.Client{
+// NewHostHealthService probes with at most concurrency requests in flight
+// (HEALTH_CONCURRENCY; below 1 means the default).
+func NewHostHealthService(repo HostHealthRepository, concurrency int) *HostHealthService {
+	if concurrency < 1 {
+		concurrency = config.DefaultHostHealthConcurrency
+	}
+	return &HostHealthService{repo: repo, concurrency: concurrency, interval: config.HostHealthInterval, now: time.Now, client: &http.Client{
 		Timeout:       config.HostHealthTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{
@@ -64,53 +75,76 @@ func NewHostHealthService(repo HostHealthRepository) *HostHealthService {
 	}}
 }
 
-// Check probes pages of targets with bounded concurrency. No telemetry credentials
-// or response bodies are sent to/persisted from application health endpoints.
+// Check is one iteration of the health job (ADR-0013): it probes the hosts that
+// are due, claiming only as many as there are free slots, so each probe starts as
+// soon as it is claimed and a slow host holds one slot for at most the probe
+// timeout. It stops claiming at the interval deadline and waits for the probes in
+// flight; hosts left unclaimed stay due for the next iteration. No telemetry
+// credentials or response bodies are sent to/persisted from health endpoints.
 func (s *HostHealthService) Check(ctx context.Context) error {
-	var afterID int64
-	for ctx.Err() == nil {
-		targets, err := s.repo.ListHealthTargets(ctx, afterID, 100)
-		if err != nil {
-			return err
+	deadline := s.now().Add(s.interval)
+	run := &probeRun{slots: make(chan struct{}, s.concurrency)}
+	for s.now().Before(deadline) && run.acquire(ctx) {
+		free := cap(run.slots) - len(run.slots) + 1
+		targets, err := s.repo.ClaimDueHealthTargets(ctx, s.now(), s.interval, min(free, maxHealthClaim))
+		if err != nil || len(targets) == 0 {
+			<-run.slots
+			run.fail(err)
+			break
 		}
-		if len(targets) == 0 {
-			return nil
-		}
-		jobs := make(chan models.HostHealthTarget)
-		failures := make(chan error, len(targets))
-		var workers sync.WaitGroup
-		for i := 0; i < min(config.HostHealthConcurrency, len(targets)); i++ {
-			workers.Add(1)
+		for i, target := range targets {
+			if i > 0 {
+				run.slots <- struct{}{} // free was counted above; releases only add room
+			}
+			run.probes.Add(1)
 			go func() {
-				defer workers.Done()
-				for target := range jobs {
-					if err := s.checkTarget(ctx, target); err != nil {
-						failures <- err
-					}
-				}
+				defer run.release()
+				run.fail(s.checkTarget(ctx, target))
 			}()
 		}
-	queue:
-		for _, target := range targets {
-			select {
-			case jobs <- target:
-			case <-ctx.Done():
-				break queue
-			}
-		}
-		close(jobs)
-		workers.Wait()
-		close(failures)
-		var errs []error
-		for err := range failures {
-			errs = append(errs, err)
-		}
-		if err := errors.Join(errs...); err != nil {
-			return err
-		}
-		afterID = targets[len(targets)-1].ID
 	}
-	return ctx.Err()
+	run.probes.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(run.errs...)
+}
+
+// probeRun is the state of one iteration: the probe slots and their failures.
+type probeRun struct {
+	slots  chan struct{}
+	probes sync.WaitGroup
+	mu     sync.Mutex
+	errs   []error
+}
+
+// acquire waits for one free slot; false when the iteration is cancelled.
+func (r *probeRun) acquire(ctx context.Context) bool {
+	select {
+	case r.slots <- struct{}{}:
+		return ctx.Err() == nil || r.giveBack()
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (r *probeRun) giveBack() bool {
+	<-r.slots
+	return false
+}
+
+func (r *probeRun) release() {
+	<-r.slots
+	r.probes.Done()
+}
+
+func (r *probeRun) fail(err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.errs = append(r.errs, err)
 }
 
 func (s *HostHealthService) checkTarget(ctx context.Context, target models.HostHealthTarget) error {

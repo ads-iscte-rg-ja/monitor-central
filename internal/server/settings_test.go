@@ -38,6 +38,7 @@ func TestLoadSettingsStopsAtTheFirstInvalidSetting(t *testing.T) {
 		{"database", "POSTGRES_HOST", "", "database config"},
 		{"ingestion limit", "INGEST_MAX_INFLIGHT", "25", "INGEST_MAX_INFLIGHT"},
 		{"instance role", "APP_ROLE", "leader", "APP_ROLE"},
+		{"health concurrency", "HEALTH_CONCURRENCY", "0", "HEALTH_CONCURRENCY"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			validSettingsEnv(t)

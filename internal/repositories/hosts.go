@@ -158,7 +158,8 @@ func (r *HostsRepository) UpdateHost(
 		     status = CASE WHEN health_endpoint<>$3 THEN 'unknown' ELSE status END,
 		     health_checked_at = CASE WHEN health_endpoint<>$3 THEN NULL ELSE health_checked_at END,
 		     health_check_ok = CASE WHEN health_endpoint<>$3 THEN NULL ELSE health_check_ok END,
-		     unavailable_since = CASE WHEN health_endpoint<>$3 THEN NULL ELSE unavailable_since END
+		     unavailable_since = CASE WHEN health_endpoint<>$3 THEN NULL ELSE unavailable_since END,
+		     next_check_at = CASE WHEN health_endpoint<>$3 THEN NULL ELSE next_check_at END
 		 WHERE id = $5`,
 		host.Name,
 		host.Hostname,
