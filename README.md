@@ -111,8 +111,11 @@ through a TLS reverse proxy that supports HTTP/2.
 On `/hosts`, enter its name and hostname/IP, then copy its API key into
 [remote's configuration](../monitor-remote/README.md).
 
-- With a **health endpoint**, central checks it every 30 seconds with a five-second
-  timeout. A 2xx response means online; redirects are not followed.
+- With a **health endpoint**, central checks it every 30 seconds (± 10 %, spread
+  over the interval) with a five-second timeout. A 2xx response means online;
+  redirects are not followed. Up to `HEALTH_CONCURRENCY` probes (default 128) run
+  at once, so 1,000 hosts with half of them timing out are each checked within
+  about 38 seconds (ADR-0013).
 - Without an endpoint, set **Offline after** to allow the expected reporting gap.
   The default is five minutes; the range is one minute to 24 hours.
 
@@ -195,7 +198,7 @@ make backend/run
   ```
 
 See [database setup and migrations](deployments/database/README.md) for details.
-The current schema version is **6**. Keep central and remote on compatible
+The current schema version is **7**. Keep central and remote on compatible
 versions of the `monitor-api` contract, and preserve each host's SQLite buffer
 across restarts.
 

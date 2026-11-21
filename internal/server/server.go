@@ -233,7 +233,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 		retentionRepo:     repositories.NewRetentionRepository(db),
 		retentionConfig:   retentionConfig,
 		alertsService:     alertsService,
-		hostHealthService: services.NewHostHealthService(hostsRepo),
+		hostHealthService: services.NewHostHealthService(hostsRepo, cfg.health.Concurrency),
 		role:              scaling.Role,
 		elector:           database.NewElector(db),
 		jobBeats:          jobBeats,
@@ -389,6 +389,7 @@ type settings struct {
 	db        *config.DBConfig
 	ingest    *config.IngestConfig
 	scaling   *config.ScalingConfig
+	health    config.HealthConfig
 }
 
 func loadSettings() (*settings, error) {
@@ -420,6 +421,9 @@ func loadSettings() (*settings, error) {
 		return nil, err
 	}
 	if s.scaling, err = config.LoadScalingConfig(); err != nil {
+		return nil, err
+	}
+	if s.health, err = config.LoadHealthConfig(); err != nil {
 		return nil, err
 	}
 	return &s, nil

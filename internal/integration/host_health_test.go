@@ -127,7 +127,7 @@ func TestVersionTwoHealthUpgradePreservesTelemetryAndKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Recreate the version-2 shape only inside this isolated test schema.
-	if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts DROP COLUMN health_endpoint,DROP COLUMN contact_timeout_seconds,DROP COLUMN health_checked_at,DROP COLUMN health_check_ok,DROP COLUMN unavailable_since;
+	if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts DROP COLUMN health_endpoint,DROP COLUMN contact_timeout_seconds,DROP COLUMN health_checked_at,DROP COLUMN health_check_ok,DROP COLUMN unavailable_since,DROP COLUMN next_check_at;
  DROP TABLE login_attempts;
  DROP TABLE host_buffer_status;
  DELETE FROM schema_migrations WHERE version >= 3`); err != nil {
@@ -140,5 +140,51 @@ func TestVersionTwoHealthUpgradePreservesTelemetryAndKeys(t *testing.T) {
 	}
 	if count(t, db, "SELECT COUNT(*) FROM hosts WHERE health_endpoint='' AND contact_timeout_seconds=300") != 1 || count(t, db, "SELECT COUNT(*) FROM machine_stats") != 1 || count(t, db, "SELECT COUNT(*) FROM telemetry_receipts") != 1 {
 		t.Fatal("upgrade did not preserve host or telemetry state")
+	}
+}
+
+// ADR-0013: a claim returns only due hosts, books the next check at 30 s ± 10 %,
+// never hands the same host out twice, and an edited endpoint is due again.
+func TestHealthClaimBooksTheNextCheck(t *testing.T) {
+	db := isolatedDB(t)
+	migrate(t, db)
+	ctx := context.Background()
+	hosts := repositories.NewHostsRepository(db, testHasher(t))
+	svc := services.NewHostsService(hosts)
+	var ids []int64
+	for i := 0; i < 5; i++ {
+		h, err := svc.CreateHost(ctx, models.CreateHostRequest{Name: "h", Hostname: "h.local", HealthEndpoint: "https://app.example/health"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, h.ID)
+	}
+	if _, err := svc.CreateHost(ctx, models.CreateHostRequest{Name: "no endpoint", Hostname: "n.local"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	first, err := hosts.ClaimDueHealthTargets(ctx, now, 30*time.Second, 3)
+	if err != nil || len(first) != 3 {
+		t.Fatal(first, err)
+	}
+	rest, err := hosts.ClaimDueHealthTargets(ctx, now, 30*time.Second, 10)
+	if err != nil || len(rest) != 2 {
+		t.Fatal("a claimed host was handed out again, or a host without endpoint was claimed", rest, err)
+	}
+	if again, err := hosts.ClaimDueHealthTargets(ctx, now.Add(26*time.Second), 30*time.Second, 10); err != nil || len(again) != 0 {
+		t.Fatal("a host was due before 27 s", again, err)
+	}
+	if count(t, db, `SELECT COUNT(*) FROM hosts WHERE health_endpoint<>''
+ AND next_check_at BETWEEN $1::timestamptz + INTERVAL '27 seconds' AND $1::timestamptz + INTERVAL '33 seconds'`, now) != 5 {
+		t.Fatal("next check outside 30 s ± 10 %")
+	}
+	if all, err := hosts.ClaimDueHealthTargets(ctx, now.Add(34*time.Second), 30*time.Second, 10); err != nil || len(all) != 5 {
+		t.Fatal("hosts not due again after the interval", all, err)
+	}
+	if err := svc.UpdateHost(ctx, ids[0], models.UpdateHostRequest{Name: "h", Hostname: "h.local", HealthEndpoint: "https://other.example/health"}); err != nil {
+		t.Fatal(err)
+	}
+	if edited, err := hosts.ClaimDueHealthTargets(ctx, now.Add(35*time.Second), 30*time.Second, 10); err != nil || len(edited) != 1 || edited[0].ID != ids[0] {
+		t.Fatal("an edited endpoint is not due at once", edited, err)
 	}
 }

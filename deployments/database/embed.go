@@ -22,5 +22,8 @@ var HostBufferStatusSQL string
 //go:embed migrations/006_alert_buffer_quarantined.sql
 var AlertBufferQuarantinedSQL string
 
+//go:embed migrations/007_host_health_schedule.sql
+var HostHealthScheduleSQL string
+
 //go:embed migrations/legacy_text_to_numeric.sql
 var LegacyTextToNumericSQL string

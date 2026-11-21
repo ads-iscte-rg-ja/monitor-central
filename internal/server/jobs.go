@@ -32,8 +32,10 @@ func (s *Server) startBackgroundJobs(ctx context.Context) {
 }
 
 func (s *Server) checkHostHealth(ctx context.Context) {
+	// Each iteration probes only the hosts now due and ends within the interval, so
+	// the heartbeat keeps the interval while the job wakes up every tick (ADR-0013).
 	s.jobBeats.Register("host_health", config.HostHealthInterval)
-	ticker := time.NewTicker(config.HostHealthInterval)
+	ticker := time.NewTicker(config.HostHealthTick)
 	defer ticker.Stop()
 	for {
 		if err := s.runJob(ctx, "host_health", s.hostHealthService.Check); err != nil && ctx.Err() == nil {

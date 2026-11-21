@@ -39,7 +39,7 @@ Back up the database and stop the application before an upgrade. For Compose use
 For local Go processes use `make db/migrate`, then start the upgraded app.
 Restarting PostgreSQL or editing `init.sql` does not upgrade an existing volume.
 
-The current schema version is 6. Older databases are upgraded through every
+The current schema version is 7. Older databases are upgraded through every
 missing migration, in order, by the migration command before starting the
 updated backend. Keep the existing database configuration, persistent volume, and
 `HOST_API_KEY_SECRET`. The upgrade adds default contact-based health settings
