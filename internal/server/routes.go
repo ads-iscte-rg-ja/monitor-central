@@ -4,7 +4,6 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"monitor-central/internal/handlers"
 	"monitor-central/internal/templating/pages"
@@ -42,48 +41,13 @@ func setupRoutes(
 		tb.RenderPage("home", nil, w, r)
 	})
 
-	// Authenticated routes
+	// Authenticated routes: one table, so the auth group and the route log cannot diverge.
+	protected := protectedRoutes(authHandler, userHandler, dashboardHandler, errorLogsHandler, hostsHandler, alertsHandler)
 	r.Group(func(r chi.Router) {
 		r.Use(mdw.Auth)
-		r.Post("/logout", authHandler.Logout)
-		r.Get("/profile", userHandler.GetProfile)
-		r.Post(
-			"/profile/notification-email",
-			userHandler.UpdateNotificationEmail,
-		)
-		r.Get("/dashboard", dashboardHandler.GetDashboard)
-		r.Get("/api/v1/dashboard/metrics", dashboardHandler.GetMetrics)
-		r.Get("/api/v1/dashboard/summary", dashboardHandler.GetSummary)
-		r.Get("/errors", errorLogsHandler.GetErrorLogs)
-		r.Get("/alerts", alertsHandler.GetAlerts)
-		r.Post("/alerts", alertsHandler.CreateAlert)
-		r.Post(
-			"/alerts/{alertID}/delete",
-			alertsHandler.DeleteAlert,
-		)
-		r.Post(
-			"/alerts/{alertID}/edit",
-			alertsHandler.UpdateAlert,
-		)
-		r.Post(
-			"/alerts/events/{eventID}/acknowledge",
-			alertsHandler.AcknowledgeAlertEvent,
-		)
-		r.Get("/hosts", hostsHandler.GetHosts)
-		r.Post("/hosts", hostsHandler.CreateHost)
-		r.Post(
-			"/hosts/{hostID}/delete",
-			hostsHandler.DeleteHost,
-		)
-		r.Post(
-			"/hosts/{hostID}/edit",
-			hostsHandler.UpdateHost,
-		)
-
-		r.Post(
-			"/hosts/{hostID}/regenerate-key",
-			hostsHandler.RegenerateAPIKey,
-		)
+		for _, route := range protected {
+			r.Method(route.method, route.pattern, route.handler)
+		}
 	})
 
 	// Login
@@ -106,36 +70,59 @@ func setupRoutes(
 	r.Get("/terms", legalHandler.Terms)
 	r.Get("/offline", func(w http.ResponseWriter, r *http.Request) { tb.ServePage("offline", w, r) })
 
-	printRoutes(r, logger)
+	printRoutes(r, logger, protected)
 }
 
-// protectedPaths contains paths that require authentication
-var protectedPaths = map[string]bool{
-	"/logout":           true,
-	"/profile":          true,
-	"/dashboard":        true,
-	"/errors":           true,
-	"/alerts":           true,
-	"/hosts":            true,
-	"/api/v1/dashboard": true,
+// route is one authenticated route: the single source for registration and for
+// the route log (ADR-0012).
+type route struct {
+	method  string
+	pattern string
+	handler http.HandlerFunc
+}
+
+func protectedRoutes(
+	authHandler *handlers.AuthHandler,
+	userHandler *handlers.UserHandler,
+	dashboardHandler *handlers.DashboardHandler,
+	errorLogsHandler *handlers.ErrorLogsHandler,
+	hostsHandler *handlers.HostsHandler,
+	alertsHandler *handlers.AlertsHandler,
+) []route {
+	return []route{
+		{http.MethodPost, "/logout", authHandler.Logout},
+		{http.MethodGet, "/profile", userHandler.GetProfile},
+		{http.MethodPost, "/profile/notification-email", userHandler.UpdateNotificationEmail},
+		{http.MethodGet, "/dashboard", dashboardHandler.GetDashboard},
+		{http.MethodGet, "/api/v1/dashboard/metrics", dashboardHandler.GetMetrics},
+		{http.MethodGet, "/api/v1/dashboard/summary", dashboardHandler.GetSummary},
+		{http.MethodGet, "/errors", errorLogsHandler.GetErrorLogs},
+		{http.MethodGet, "/alerts", alertsHandler.GetAlerts},
+		{http.MethodPost, "/alerts", alertsHandler.CreateAlert},
+		{http.MethodPost, "/alerts/{alertID}/delete", alertsHandler.DeleteAlert},
+		{http.MethodPost, "/alerts/{alertID}/edit", alertsHandler.UpdateAlert},
+		{http.MethodPost, "/alerts/events/{eventID}/acknowledge", alertsHandler.AcknowledgeAlertEvent},
+		{http.MethodGet, "/hosts", hostsHandler.GetHosts},
+		{http.MethodPost, "/hosts", hostsHandler.CreateHost},
+		{http.MethodPost, "/hosts/{hostID}/delete", hostsHandler.DeleteHost},
+		{http.MethodPost, "/hosts/{hostID}/edit", hostsHandler.UpdateHost},
+		{http.MethodPost, "/hosts/{hostID}/regenerate-key", hostsHandler.RegenerateAPIKey},
+	}
 }
 
 // printRoutes lists the registered routes at debug level (LOG_LEVEL=debug), as
 // structured log lines rather than free text on stdout (ADR-0004).
-func printRoutes(r chi.Router, logger *log.Logger) {
+func printRoutes(r chi.Router, logger *log.Logger, protected []route) {
+	isProtected := make(map[string]bool, len(protected))
+	for _, route := range protected {
+		isProtected[route.method+" "+route.pattern] = true
+	}
 	walkFunc := func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		// Skip middleware-only routes
 		if route == "/*" {
 			return nil
 		}
-		isProtected := false
-		for path := range protectedPaths {
-			if strings.HasPrefix(route, path) || route == path {
-				isProtected = true
-				break
-			}
-		}
-		slog.Debug("route registered", "method", method, "route", route, "protected", isProtected)
+		slog.Debug("route registered", "method", method, "route", route, "protected", isProtected[method+" "+route])
 		return nil
 	}
 

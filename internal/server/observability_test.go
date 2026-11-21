@@ -109,9 +109,10 @@ func TestRoutesAreListedAsStructuredDebugLines(t *testing.T) {
 	defer slog.SetDefault(previous)
 
 	r := chi.NewRouter()
-	r.Get("/dashboard", func(http.ResponseWriter, *http.Request) {})
-	r.Get("/health", func(http.ResponseWriter, *http.Request) {})
-	printRoutes(r, log.New(io.Discard, "", 0))
+	noop := func(http.ResponseWriter, *http.Request) {}
+	r.Get("/dashboard", noop)
+	r.Get("/health", noop)
+	printRoutes(r, log.New(io.Discard, "", 0), []route{{http.MethodGet, "/dashboard", noop}})
 
 	text := out.String()
 	if !strings.Contains(text, `"route":"/dashboard","protected":true`) || !strings.Contains(text, `"route":"/health","protected":false`) {

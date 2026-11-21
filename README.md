@@ -199,5 +199,6 @@ The current schema version is **6**. Keep central and remote on compatible
 versions of the `monitor-api` contract, and preserve each host's SQLite buffer
 across restarts.
 
-Recent health, buffering, and delivery changes await executable verification.
-See the [implementation checklist](../IMPLEMENTATION_CHECKLIST.md) for status.
+The end-to-end tests (central, nginx with TLS, remote, and the SDK together) live
+in [monitor-platform/e2e](https://github.com/ads-iscte-rg-ja/monitor-platform/tree/main/e2e)
+and run nightly.
