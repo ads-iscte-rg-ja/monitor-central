@@ -72,6 +72,7 @@ func TestAV2MeasureProbeCycle(t *testing.T) {
 
 	// The job loop of internal/server/jobs.go: one iteration, then the next tick.
 	service := services.NewHostHealthService(repositories.NewHostsRepository(db, testHasher(t)), concurrency)
+	service.SetDialControl(nil) // the endpoints listen on loopback, which the SSRF guard refuses (ADR-0016)
 	run, stop := context.WithTimeout(ctx, duration)
 	defer stop()
 	ticker := time.NewTicker(config.HostHealthTick)

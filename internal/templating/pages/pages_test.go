@@ -8,6 +8,7 @@ import (
 	"monitor-central/internal/config"
 	"monitor-central/internal/models"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -32,8 +33,13 @@ func TestEveryPageAndStaticAssets(t *testing.T) {
 			if strings.Contains(w.Body.String(), "<script>alert(1)</script>") {
 				t.Fatal("user data not escaped")
 			}
-			if !strings.Contains(w.Body.String(), "tailwindcss/browser") {
-				t.Fatal("Tailwind CDN missing")
+			body := w.Body.String()
+			if !strings.Contains(body, `<script src="/public/tailwindcss-browser-4.1.18.js">`) {
+				t.Fatal("local Tailwind missing")
+			}
+			// ADR-0016: the CSP allows scripts from this origin only, never inline.
+			if strings.Contains(body, "://cdn.") || inlineScript.MatchString(body) || inlineHandler.MatchString(body) {
+				t.Fatalf("page %s has an external or inline script, which the CSP blocks", name)
 			}
 		})
 	}
@@ -42,7 +48,7 @@ func TestEveryPageAndStaticAssets(t *testing.T) {
 	for _, test := range []struct {
 		path   string
 		status int
-	}{{"/js/app.js", 200}, {"/public/app.css", 200}, {"/js/", 404}, {"/js/../templates/login.html", 404}, {"/js/.env", 404}} {
+	}{{"/js/app.js", 200}, {"/public/app.css", 200}, {"/public/tailwindcss-browser-4.1.18.js", 200}, {"/js/", 404}, {"/js/../templates/login.html", 404}, {"/js/.env", 404}} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest("GET", test.path, nil))
 		if w.Code != test.status {
@@ -50,3 +56,8 @@ func TestEveryPageAndStaticAssets(t *testing.T) {
 		}
 	}
 }
+
+var (
+	inlineScript  = regexp.MustCompile(`<script(\s[^>]*)?>\s*[^<\s]`) // a <script> with a body
+	inlineHandler = regexp.MustCompile(`\son[a-z]+\s*=`)              // onclick=, onload=, …
+)
