@@ -7,7 +7,6 @@ import (
 	"monitor-central/internal/database"
 	"monitor-central/internal/utils/apikey"
 	"os"
-	"time"
 )
 
 func main() {
@@ -38,7 +37,11 @@ func run(logger *log.Logger) error {
 		return err
 	}
 	defer db.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	timeout, err := config.LoadMigrateTimeout()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := db.Migrate(ctx, hasher); err != nil {
 		return err

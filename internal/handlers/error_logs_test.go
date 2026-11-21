@@ -12,6 +12,7 @@ import (
 type fakeErrorLogs struct {
 	filters models.ErrorLogFilters
 	err     error
+	capped  bool
 }
 
 func (f *fakeErrorLogs) GetPage(_ context.Context, filters models.ErrorLogFilters) (*models.ErrorLogsPage, error) {
@@ -25,6 +26,9 @@ func (f *fakeErrorLogs) GetPage(_ context.Context, filters models.ErrorLogFilter
 		PageSize:   20,
 		TotalPages: 3,
 		Filters:    filters,
+		// Above the count cap (ADR-0017) the page says "10000+".
+		TotalErrors: models.ErrorLogCountCap,
+		TotalCapped: f.capped,
 	}, nil
 }
 
@@ -51,4 +55,17 @@ func TestErrorLogsFiltersAndPagination(t *testing.T) {
 	wantStatus(t, call(t, "GET", "/errors", "/errors?level=DEBUG", nil, h.GetErrorLogs), http.StatusBadRequest, "Invalid error level")
 	svc.err = errStore
 	wantStatus(t, call(t, "GET", "/errors", "/errors", nil, h.GetErrorLogs), http.StatusInternalServerError, "Internal Server Error")
+}
+
+func TestErrorLogsShowsACappedCount(t *testing.T) {
+	svc := &fakeErrorLogs{capped: true}
+	h := NewErrorLogsHandler(svc, realPages(t), discard())
+	body := call(t, "GET", "/errors", "/errors", nil, h.GetErrorLogs).Body.String()
+	if !strings.Contains(body, "10000+ entries") || !strings.Contains(body, "Page 1 of 3+") {
+		t.Fatalf("capped count not shown: %s", body)
+	}
+	svc.capped = false
+	if body = call(t, "GET", "/errors", "/errors", nil, h.GetErrorLogs).Body.String(); strings.Contains(body, "10000+") {
+		t.Fatalf("exact count shown as capped: %s", body)
+	}
 }

@@ -207,6 +207,7 @@ func New(logger *log.Logger, slogger *slog.Logger, obs *config.ObservabilityConf
 			alertsHandler,
 			sessionManager,
 			mdw,
+			middleware.Bulkhead(cfg.dashboard, config.DashboardQueueWait),
 		)
 	})
 
@@ -397,6 +398,7 @@ type settings struct {
 	health    config.HealthConfig
 	location  *time.Location
 	web       config.WebSecurityConfig
+	dashboard config.DashboardConfig
 }
 
 func loadSettings() (*settings, error) {
@@ -425,6 +427,9 @@ func loadSettings() (*settings, error) {
 		return nil, fmt.Errorf("failed to load database config: %w", err)
 	}
 	if s.ingest, err = config.LoadIngestConfig(s.db.MaxOpenConns); err != nil {
+		return nil, err
+	}
+	if s.dashboard, err = config.LoadDashboardConfig(s.db.MaxOpenConns, s.ingest.MaxInflight); err != nil {
 		return nil, err
 	}
 	if s.scaling, err = config.LoadScalingConfig(); err != nil {

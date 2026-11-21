@@ -224,11 +224,19 @@ type ErrorLogListItem struct {
 }
 
 // ErrorLogsPage contains all data needed to render the error logs page.
+// ErrorLogCountCap is how far the error log page counts (ADR-0017): above it,
+// the page shows "10000+" and stops at the last page the cap covers, so the
+// count costs at most this many index entries whatever the table holds.
+const ErrorLogCountCap = 10000
+
 type ErrorLogsPage struct {
 	Errors      []ErrorLogListItem
 	Hosts       []DashboardHost
 	AppNames    []string
 	TotalErrors int
+	// TotalCapped is true when more than ErrorLogCountCap errors match:
+	// TotalErrors is then the cap, not the exact count.
+	TotalCapped bool
 	Page        int
 	PageSize    int
 	TotalPages  int

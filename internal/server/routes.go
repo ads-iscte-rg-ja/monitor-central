@@ -27,7 +27,7 @@ func setupRoutes(
 	alertsHandler *handlers.AlertsHandler,
 	sessionManager *session.SessionManager,
 	mdw *middleware.Middleware,
-
+	bulkhead func(http.Handler) http.Handler,
 ) {
 	// Global Middlewares
 	r.Use(mdw.LoadUserContext)
@@ -42,9 +42,10 @@ func setupRoutes(
 	})
 
 	// Authenticated routes: one table, so the auth group and the route log cannot diverge.
+	// The bulkhead (ADR-0017) bounds how much of the connection pool they can hold.
 	protected := protectedRoutes(authHandler, userHandler, dashboardHandler, errorLogsHandler, hostsHandler, alertsHandler)
 	r.Group(func(r chi.Router) {
-		r.Use(mdw.Auth)
+		r.Use(mdw.Auth, bulkhead)
 		for _, route := range protected {
 			r.Method(route.method, route.pattern, route.handler)
 		}

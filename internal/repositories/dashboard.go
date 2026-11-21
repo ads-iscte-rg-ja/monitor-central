@@ -76,16 +76,19 @@ func (r *DashboardRepository) CountErrorsToday(
 	var total int
 	var critical int
 
+	// From the hourly counters (ADR-0017), not a COUNT(*) over the day's
+	// errors: at most 24 rows per host and level. The buckets are UTC hours,
+	// so the day boundary is exact for any whole-hour offset of CURRENT_DATE.
 	err := r.db.QueryRowContext(
 		ctx,
 		`SELECT
-			COUNT(*),
-			COUNT(*) FILTER (
+			COALESCE(SUM(count), 0),
+			COALESCE(SUM(count) FILTER (
 				WHERE level IN ('CRITICAL', 'PANIC')
-			)
-		 FROM error_logs
-		 WHERE created_at >= CURRENT_DATE
-		   AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
+			), 0)
+		 FROM error_counts_hourly
+		 WHERE bucket >= CURRENT_DATE
+		   AND bucket < CURRENT_DATE + INTERVAL '1 day'`,
 	).Scan(&total, &critical)
 
 	return total, critical, err
@@ -120,16 +123,20 @@ func (r *DashboardRepository) AverageLatestCPU(
 ) (float64, error) {
 	var average float64
 
+	// One index lookup per host for its latest sample (ADR-0017), instead of
+	// sorting every sample with DISTINCT ON. Hosts without samples are left
+	// out, as before.
 	err := r.db.QueryRowContext(
 		ctx,
-		`SELECT COALESCE(AVG(cpu_percent), 0)
-		 FROM (
-			SELECT DISTINCT ON (host_id)
-				host_id,
-				cpu_percent
+		`SELECT COALESCE(AVG(latest.cpu_percent), 0)
+		 FROM hosts h
+		 CROSS JOIN LATERAL (
+			SELECT cpu_percent
 			FROM machine_stats
-			ORDER BY host_id, collected_at DESC
-		 ) AS latest_stats`,
+			WHERE host_id = h.id
+			ORDER BY collected_at DESC
+			LIMIT 1
+		 ) AS latest`,
 	).Scan(&average)
 
 	return average, err
