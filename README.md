@@ -196,8 +196,15 @@ make backend/run
   host, shows it as `buffer` in `/api/v1/dashboard/metrics`, and the
   `buffer_quarantined` alert metric fires on quarantined records (threshold 1 =
   any). An invalid report is logged and ignored; the statistics are accepted.
-- Central retention is disabled by default. Set the `RETENTION_*_DAYS` values to
-  enable it; `CLEANUP_INTERVAL` and `CLEANUP_BATCH_SIZE` control scheduled cleanup.
+- Browser routes have their own share of the pool (ADR-0017):
+  `DASHBOARD_MAX_INFLIGHT` (default 20% of `POSTGRES_MAX_OPEN_CONNS`) requests at
+  once, each with a `DASHBOARD_QUERY_TIMEOUT` (default 10 s) deadline on its
+  database work. A request that waits more than 2 s for a slot gets 503 with
+  `Retry-After`, so a slow page cannot stop ingestion or the background jobs.
+- Retention is enabled by default (ADR-0017): telemetry 30 days, resolved
+  incidents 180, sent emails 30 and audit 365, every minute, at most 10,000 rows
+  per category per run. The `RETENTION_*_DAYS`, `CLEANUP_INTERVAL` and
+  `CLEANUP_BATCH_SIZE` values in [`.env.example`](.env.example) change it.
 - Back up PostgreSQL and stop the backend before upgrading an existing database:
 
   ```sh
@@ -207,7 +214,8 @@ make backend/run
   ```
 
 See [database setup and migrations](deployments/database/README.md) for details.
-The current schema version is **7**. Keep central and remote on compatible
+The current schema version is **8**. Migration 8 reads the telemetry tables in
+full: on a database with weeks of data, raise `MIGRATE_TIMEOUT` first. Keep central and remote on compatible
 versions of the `monitor-api` contract, and preserve each host's SQLite buffer
 across restarts.
 
